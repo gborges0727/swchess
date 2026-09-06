@@ -1,6 +1,6 @@
 # Original game files. Copyrighted Lucasfilm / Software Toolworks material, never committed.
 original/
-build/
-assets/
+/build*/
+/assets/
 .cache/
 *.ghidra/
