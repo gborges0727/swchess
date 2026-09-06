@@ -7,6 +7,7 @@
 //   swchess-viewer --cd original/win3x/cd --dump-timeline BBWB
 //   swchess-viewer --cd original/win3x/cd --dump-board WHTBTM out.ppm [--fen "..."]
 //   swchess-viewer --cd original/win3x/cd --hit 108 130
+//   swchess-viewer --cd original/win3x/cd --assets assets --review BBWB
 //
 // The --dump-frame, --dump-timeline, --dump-board and --hit forms never open a
 // window, so they run on a machine with no display.
@@ -25,6 +26,7 @@
 
 #include "anim/capture.h"
 #include "anim/player.h"
+#include "app/review.h"
 #include "assets/anx.h"
 #include "assets/bmp.h"
 #include "assets/wav.h"
@@ -60,6 +62,10 @@ struct Options {
     bool hit = false;
     int hitX = 0;
     int hitY = 0;
+    std::string assetsDir = "assets";
+    std::string review;
+    std::int64_t reviewDumpMs = -1;
+    std::string reviewDumpPath;
 };
 
 void printUsage() {
@@ -69,6 +75,9 @@ void printUsage() {
                  "       swchess-viewer --cd <dir> --dump-timeline <NAME>\n"
                  "       swchess-viewer --cd <dir> --dump-board <SET> <out.ppm> [--fen <FEN>]\n"
                  "       swchess-viewer --cd <dir> --hit <x> <y> [--set <SET>]\n"
+                 "       swchess-viewer --cd <dir> --assets <dir> --review <NAME>\n"
+                 "       swchess-viewer --cd <dir> --assets <dir> --review <NAME> "
+                 "--dump-at <MS> <out.ppm>\n"
                  "       a set is WHTBTM, WHTTOP, FACING or 2D\n");
 }
 
@@ -128,6 +137,21 @@ bool parseOptions(int argc, char** argv, Options& options) {
             options.hit = true;
             options.hitX = std::atoi(x);
             options.hitY = std::atoi(y);
+        } else if (arg == "--assets") {
+            const char* value = next("--assets");
+            if (value == nullptr) return false;
+            options.assetsDir = value;
+        } else if (arg == "--review") {
+            const char* value = next("--review");
+            if (value == nullptr) return false;
+            options.review = value;
+        } else if (arg == "--dump-at") {
+            const char* number = next("--dump-at");
+            if (number == nullptr) return false;
+            options.reviewDumpMs = std::atoll(number);
+            const char* path = next("--dump-at output path");
+            if (path == nullptr) return false;
+            options.reviewDumpPath = path;
         } else if (arg == "-h" || arg == "--help") {
             printUsage();
             return false;
@@ -141,7 +165,7 @@ bool parseOptions(int argc, char** argv, Options& options) {
         return false;
     }
     if (options.capture.empty() && options.dumpTimeline.empty() &&
-        options.dumpBoardPath.empty() && !options.hit) {
+        options.dumpBoardPath.empty() && !options.hit && options.review.empty()) {
         printUsage();
         return false;
     }
@@ -524,6 +548,18 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
+        if (!options.review.empty()) {
+            swchess::app::ReviewOptions review;
+            review.cdDir = options.cdDir;
+            review.assetsDir = options.assetsDir;
+            review.capture = options.review;
+            review.dumpAtMs = options.reviewDumpMs;
+            review.dumpPath = options.reviewDumpPath;
+            if (review.dumpAtMs >= 0) {
+                return swchess::app::dumpReview(review);
+            }
+            return swchess::app::runReview(review);
+        }
         if (!options.dumpTimeline.empty()) {
             return dumpTimeline(options);
         }

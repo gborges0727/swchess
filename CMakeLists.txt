@@ -38,8 +38,8 @@ target_include_directories(swchess_render PUBLIC src)
 target_link_libraries(swchess_render PUBLIC swchess_assets)
 target_compile_options(swchess_render PRIVATE -Wall -Wextra)
 
-add_executable(swchess-viewer src/app/viewer.cpp)
-target_link_libraries(swchess-viewer PRIVATE swchess_render swchess_anim swchess_audio
+add_executable(swchess-viewer src/app/viewer.cpp src/app/review.cpp)
+target_link_libraries(swchess-viewer PRIVATE swchess_render swchess_anim swchess_audio swchess_text
                       SDL3::SDL3)
 target_compile_options(swchess-viewer PRIVATE -Wall -Wextra)
 
