@@ -29,7 +29,7 @@ from . import fixture, images, png, timeline
 MODEL_NAME = "rife-v4.6"
 DEFAULT_BINARY = ".cache/rife/bin/rife-ncnn-vulkan"
 DEFAULT_MODEL = ".cache/rife/bin/rife-v4.6"
-MAX_DENOMINATOR = 128
+MAX_DENOMINATOR = 512
 RIFE_PROCESSES = 3
 
 
@@ -61,11 +61,11 @@ def load_spec(assets, capture, resolved_path):
     return spec, None, None
 
 
-def _decimal(value):
-    """Round a Fraction of milliseconds to six decimal places."""
+def _round6(value):
+    """Round a Fraction of milliseconds to a Fraction of six decimal places."""
     scaled = value * 1000000
     whole = (scaled.numerator * 2 + scaled.denominator) // (scaled.denominator * 2)
-    return whole / 1000000
+    return Fraction(whole, 1000000)
 
 
 def prepare(spec, source_dir, work_dir):
@@ -249,14 +249,16 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
                    binary, model, commands, source_dir, root):
     """Describe the run in enough detail to reproduce and check it."""
     x, y, width, height = rect
+    starts = [_round6(entry["t"]) for entry in entries]
+    ends = starts[1:] + [Fraction(spec["end_ms"])]
     frames = [{
         "file": name,
-        "t_ms": _decimal(entry["t"]),
-        "duration_ms": _decimal(entry["duration"]),
+        "t_ms": float(start),
+        "duration_ms": float(stop - start),
         "kind": entry["kind"],
         "source": entry["source"],
         "s": float(entry["s"]) if entry["s"] is not None else None,
-    } for entry, name in zip(entries, names)]
+    } for entry, name, start, stop in zip(entries, names, starts, ends)]
     sounds = [{"pose": p["index"], "t_ms": p["t_ms"], "sound": p["sound"]}
               for p in spec["poses"] if p.get("sound")]
     return {

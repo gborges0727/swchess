@@ -90,12 +90,28 @@ def run(out_dir, verbose=True):
             copied += 1
     notes.append("%d authored pose times land on a sample and all copy their pose" % copied)
 
+    first_pose_t = min(Decimal(p["t_ms"]) for p in manifest["input"]["poses"])
+    late_blanks = [f["file"] for f in frames
+                   if f["kind"] == "blank" and Decimal(f["t_ms"]) >= first_pose_t]
+    if late_blanks:
+        problems.append("%d empty frames sit at or after the first pose, first %s"
+                        % (len(late_blanks), late_blanks[0]))
+    else:
+        notes.append("%d empty frames, all before the first pose at %s ms"
+                     % (sum(1 for f in frames if f["kind"] == "blank"), first_pose_t))
+
     resolved = manifest["input"]["resolved"]
     if resolved and os.path.exists(resolved):
         with open(resolved) as fh:
             spec = json.load(fh)
         want_sounds = [{"pose": p["index"], "t_ms": p["t_ms"], "sound": p["sound"]}
                        for p in spec["poses"] if p.get("sound")]
+        want_pre = spec.get("pre_sounds") or []
+        got_pre = json.loads(json.dumps(manifest["pre_sounds"], default=str))
+        if json.loads(json.dumps(want_pre)) != got_pre:
+            problems.append("the manifest pre_sounds differ from %s" % resolved)
+        else:
+            notes.append("%d pre_sounds kept from %s" % (len(want_pre), resolved))
     else:
         want_sounds = None
     got_sounds = json.loads(json.dumps(manifest["sounds"], default=str))

@@ -43,11 +43,13 @@ def shrink(pixels, width, height, factor):
     return out, out_w, out_h
 
 
-def sheet(out_dir, every=8, columns=10, factor=2, out_path=None):
+def sheet(out_dir, every=8, columns=10, factor=2, out_path=None, start=0, limit=None):
     """Write the contact sheet and return its path."""
     with open(os.path.join(out_dir, "manifest.json")) as fh:
         manifest = json.load(fh)
-    frames = manifest["frames"][::every]
+    frames = manifest["frames"][start:][::every]
+    if limit:
+        frames = frames[:limit]
     cells = []
     cell_w = cell_h = 0
     for frame in frames:
@@ -90,8 +92,11 @@ def main(argv=None):
     parser.add_argument("--columns", type=int, default=10)
     parser.add_argument("--scale", type=int, default=2, help="shrink each cell by this factor")
     parser.add_argument("--out", help="path of the sheet, default <out_dir>/contact.png")
+    parser.add_argument("--start", type=int, default=0, help="first frame to show")
+    parser.add_argument("--limit", type=int, help="stop after this many cells")
     args = parser.parse_args(argv)
-    print(sheet(args.out_dir, args.every, args.columns, args.scale, args.out))
+    print(sheet(args.out_dir, args.every, args.columns, args.scale, args.out,
+                args.start, args.limit))
     return 0
 
 
