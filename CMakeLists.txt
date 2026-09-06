@@ -58,6 +58,9 @@ endif()
 include(CTest)
 add_subdirectory(src/anim)
 
+# The text module reads the language string tables and the two bitmap fonts.
+add_subdirectory(src/text)
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
