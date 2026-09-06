@@ -43,6 +43,7 @@ endif()
 add_library(swchess_anim STATIC
   capture.cpp
   player.cpp
+  walk.cpp
 )
 # Headers include as "anim/capture.h", so the include root is src.
 target_include_directories(swchess_anim PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
@@ -55,3 +56,10 @@ target_compile_options(anim_test PRIVATE -Wall -Wextra)
 
 add_test(NAME anim_test COMMAND anim_test "${SWCHESS_CD_DIR}")
 set_tests_properties(anim_test PROPERTIES TIMEOUT 300)
+
+add_executable(walk_test walk_test.cpp)
+target_link_libraries(walk_test PRIVATE swchess_anim)
+target_compile_options(walk_test PRIVATE -Wall -Wextra)
+
+add_test(NAME walk_test COMMAND walk_test "${SWCHESS_CD_DIR}")
+set_tests_properties(walk_test PROPERTIES TIMEOUT 300)
