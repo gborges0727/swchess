@@ -1,43 +1,44 @@
-// swchess-viewer shows one decoded .ANX capture over one of the CD
-// backgrounds. It opens an SDL3 window backed by the default macOS renderer,
-// which is Metal.
+// swchess-viewer plays one capture animation over one of the CD backgrounds.
+// It opens an SDL3 window backed by the default macOS renderer, which is
+// Metal, and drives the animation from src/anim.
 //
 //   swchess-viewer --cd original/win3x/cd --capture BBWB [--bg SPACE256]
 //   swchess-viewer --cd original/win3x/cd --capture BBWB --dump-frame 39 out.ppm
+//   swchess-viewer --cd original/win3x/cd --dump-timeline BBWB
 //
-// The --dump-frame form composites on the CPU and never opens a window, so it
-// runs on a machine with no display.
+// The --dump-frame and --dump-timeline forms never open a window, so they run
+// on a machine with no display.
 
 #include <SDL3/SDL.h>
 
 #include <chrono>
-#include <map>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <map>
 #include <string>
 #include <vector>
 
+#include "anim/capture.h"
+#include "anim/player.h"
 #include "assets/anx.h"
 #include "assets/bmp.h"
+#include "assets/wav.h"
+#include "audio/audio.h"
 #include "render/compositor.h"
 
 namespace {
 
-// The nine backgrounds the number keys select, in key order.
+// The eight backgrounds the number keys select, in key order.
 const char* const kBackgrounds[] = {
     "SPACE256", "THRON256", "2DBDBTOP", "2DBDWTOP",
     "FACING_P", "2DSET_P",  "WHTBTM_P", "WHTTOP_P",
 };
 constexpr int kBackgroundCount = 8;
 
-// One timeline entry lasts this long until the real cadence is recovered from
-// XCHESS.EXE. Section 5 of docs/plan.md calls this provisional.
-constexpr std::int64_t kFrameMillis = 120;
-
-constexpr int kLogicalWidth = 640;
-constexpr int kLogicalHeight = 480;
+constexpr int kLogicalWidth = swchess::anim::kCanvasWidth;
+constexpr int kLogicalHeight = swchess::anim::kCanvasHeight;
 
 struct Options {
     std::string cdDir;
@@ -45,12 +46,14 @@ struct Options {
     std::string background = "SPACE256";
     int dumpFrame = -1;
     std::string dumpPath;
+    std::string dumpTimeline;
 };
 
 void printUsage() {
     std::fprintf(stderr,
                  "usage: swchess-viewer --cd <dir> --capture <NAME> [--bg <NAME>]\n"
-                 "       swchess-viewer --cd <dir> --capture <NAME> --dump-frame <N> <out.ppm>\n");
+                 "       swchess-viewer --cd <dir> --capture <NAME> --dump-frame <N> <out.ppm>\n"
+                 "       swchess-viewer --cd <dir> --dump-timeline <NAME>\n");
 }
 
 bool parseOptions(int argc, char** argv, Options& options) {
@@ -82,6 +85,10 @@ bool parseOptions(int argc, char** argv, Options& options) {
             const char* path = next("--dump-frame output path");
             if (path == nullptr) return false;
             options.dumpPath = path;
+        } else if (arg == "--dump-timeline") {
+            const char* value = next("--dump-timeline");
+            if (value == nullptr) return false;
+            options.dumpTimeline = value;
         } else if (arg == "-h" || arg == "--help") {
             printUsage();
             return false;
@@ -90,50 +97,94 @@ bool parseOptions(int argc, char** argv, Options& options) {
             return false;
         }
     }
-    if (options.cdDir.empty() || options.capture.empty()) {
+    if (options.cdDir.empty()) {
+        printUsage();
+        return false;
+    }
+    if (options.capture.empty() && options.dumpTimeline.empty()) {
         printUsage();
         return false;
     }
     return true;
 }
 
-std::string capturePath(const Options& options) {
-    return options.cdDir + "/" + options.capture + ".ANX";
-}
-
 std::string backgroundPath(const std::string& cdDir, const std::string& name) {
     return cdDir + "/" + name + ".BMP";
 }
 
-// Composites timeline entry `index` over the background and writes a PPM.
+const swchess::anim::CapturePose* findPose(const swchess::anim::CaptureTimeline& timeline,
+                                           int index) {
+    for (const swchess::anim::CapturePose& pose : timeline.poses) {
+        if (static_cast<int>(pose.index) == index) {
+            return &pose;
+        }
+    }
+    return nullptr;
+}
+
+// Composites pose `index` at its resolved position over the background.
 int dumpFrame(const Options& options) {
-    swchess::AnxFile capture = swchess::loadAnx(capturePath(options));
-    if (options.dumpFrame < 0 ||
-        static_cast<std::size_t>(options.dumpFrame) >= capture.timeline.size()) {
-        std::fprintf(stderr, "frame %d is outside the %zu entry timeline\n", options.dumpFrame,
-                     capture.timeline.size());
+    swchess::anim::CaptureTimeline timeline =
+        swchess::anim::loadCapture(options.cdDir, options.capture);
+    const swchess::anim::CapturePose* pose = findPose(timeline, options.dumpFrame);
+    if (pose == nullptr) {
+        std::fprintf(stderr, "%s has no shown pose %d, it shows %zu of %zu entries\n",
+                     options.capture.c_str(), options.dumpFrame, timeline.poses.size(),
+                     timeline.entryCount);
         return 1;
     }
     swchess::Image canvas = swchess::loadBmp(backgroundPath(options.cdDir, options.background));
-    const swchess::AnxRecord& record =
-        capture.records.at(capture.timeline[static_cast<std::size_t>(options.dumpFrame)]);
-    std::vector<std::uint8_t> rgba = swchess::anxToRGBA(record);
-    swchess::Placement place = swchess::centerOn(canvas, record.width, record.height);
-    swchess::blitRGBA(canvas, rgba.data(), record.width, record.height, place.x, place.y);
+    std::vector<std::uint8_t> rgba = swchess::anxToRGBA(*pose->record);
+    swchess::blitRGBA(canvas, rgba.data(), pose->width, pose->height, pose->x, pose->y);
     swchess::writePPM(canvas, options.dumpPath);
-    std::printf("wrote %s from %s frame %d, record 0x%x, %dx%d at %d,%d over %s\n",
-                options.dumpPath.c_str(), options.capture.c_str(), options.dumpFrame, record.offset,
-                record.width, record.height, place.x, place.y, options.background.c_str());
+    std::printf("wrote %s from %s pose %zu, record 0x%x, %dx%d at %d,%d, t %lld ms, over %s\n",
+                options.dumpPath.c_str(), options.capture.c_str(), pose->index, pose->recordOffset,
+                pose->width, pose->height, pose->x, pose->y,
+                static_cast<long long>(pose->startMs), options.background.c_str());
     return 0;
 }
 
-// One preloaded capture frame ready to draw.
-struct FrameTexture {
-    SDL_Texture* texture = nullptr;
-    int width = 0;
-    int height = 0;
-    std::uint32_t offset = 0;
-};
+// Prints one line per shown pose plus a summary of the whole capture.
+int dumpTimeline(const Options& options) {
+    swchess::anim::CaptureTimeline timeline =
+        swchess::anim::loadCapture(options.cdDir, options.dumpTimeline);
+    std::printf("index t_ms x y w h sound mode\n");
+    for (const swchess::anim::CapturePose& pose : timeline.poses) {
+        const char* cue = pose.hasSound ? pose.sound.cue.c_str() : "-";
+        const char* mode = pose.hasSound ? swchess::anim::soundModeName(pose.sound.mode) : "-";
+        std::printf("%zu %lld %d %d %d %d %s %s\n", pose.index,
+                    static_cast<long long>(pose.startMs), pose.x, pose.y, pose.width, pose.height,
+                    cue, mode);
+    }
+    std::printf("# %s entries %zu poses %zu delay %lld hold %lld offset %d,%d hold_end %lld end %lld\n",
+                timeline.name.c_str(), timeline.entryCount, timeline.poses.size(),
+                static_cast<long long>(timeline.frameDelayMs),
+                static_cast<long long>(timeline.holdMs), timeline.offsetX, timeline.offsetY,
+                static_cast<long long>(timeline.holdEndMs), static_cast<long long>(timeline.endMs));
+    if (timeline.hasEndSound) {
+        std::printf("# end sound %s %s t %lld\n", timeline.endSound.cue.c_str(),
+                    timeline.endSound.resolved ? "resolved" : "silent",
+                    static_cast<long long>(timeline.endSound.startMs));
+    }
+    return 0;
+}
+
+// Every WAVE resource in SWCAUDIO.DLL, ready for the mixer.
+std::map<std::string, swchess::audio::Clip> loadClips(const std::string& cdDir) {
+    std::map<std::string, swchess::audio::Clip> clips;
+    for (const swchess::WaveResource& resource : swchess::loadAudioDll(cdDir)) {
+        swchess::audio::Clip clip;
+        clip.spec.channels = resource.sound.channels > 0 ? resource.sound.channels : 1;
+        clip.spec.freq = resource.sound.sampleRate > 0
+                             ? static_cast<int>(resource.sound.sampleRate)
+                             : 22050;
+        clip.spec.format = resource.sound.bitsPerSample == 16 ? SDL_AUDIO_S16LE : SDL_AUDIO_U8;
+        clip.pcm.resize(resource.sound.samples.size());
+        std::memcpy(clip.pcm.data(), resource.sound.samples.data(), resource.sound.samples.size());
+        clips.emplace(resource.name, std::move(clip));
+    }
+    return clips;
+}
 
 SDL_Texture* makeTexture(SDL_Renderer* renderer, const std::uint8_t* rgba, int width, int height) {
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
@@ -148,9 +199,10 @@ SDL_Texture* makeTexture(SDL_Renderer* renderer, const std::uint8_t* rgba, int w
 }
 
 int runViewer(const Options& options) {
-    swchess::AnxFile capture = swchess::loadAnx(capturePath(options));
-    if (capture.timeline.empty()) {
-        std::fprintf(stderr, "%s has no timeline entries\n", options.capture.c_str());
+    swchess::anim::CaptureTimeline timeline =
+        swchess::anim::loadCapture(options.cdDir, options.capture);
+    if (timeline.poses.empty()) {
+        std::fprintf(stderr, "%s shows no poses\n", options.capture.c_str());
         return 1;
     }
 
@@ -175,50 +227,75 @@ int runViewer(const Options& options) {
     SDL_SetRenderLogicalPresentation(renderer, kLogicalWidth, kLogicalHeight,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
-    // Upload every distinct record once, then point each timeline entry at it.
-    std::vector<SDL_Texture*> owned;
-    std::map<std::uint32_t, std::size_t> byOffset;
-    for (const auto& [offset, record] : capture.records) {
+    // Upload every distinct record once, then point each pose at its texture.
+    std::map<std::uint32_t, SDL_Texture*> textures;
+    for (const auto& [offset, record] : timeline.anx.records) {
         std::vector<std::uint8_t> rgba = swchess::anxToRGBA(record);
         SDL_Texture* texture = makeTexture(renderer, rgba.data(), record.width, record.height);
         if (texture == nullptr) {
             std::fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
             return 1;
         }
-        byOffset[offset] = owned.size();
-        owned.push_back(texture);
+        textures[offset] = texture;
     }
-    std::vector<FrameTexture> frames;
-    frames.reserve(capture.timeline.size());
-    for (std::uint32_t offset : capture.timeline) {
-        const swchess::AnxRecord& record = capture.records.at(offset);
-        frames.push_back(FrameTexture{owned[byOffset[offset]], record.width, record.height, offset});
+
+    // The mixer falls back to SDL's dummy driver when no device opens, so this
+    // path works over SSH as well as on a machine with speakers.
+    swchess::audio::Mixer mixer;
+    std::map<std::string, swchess::audio::Clip> clips = loadClips(options.cdDir);
+    std::vector<swchess::audio::Cue> cues;
+    for (const swchess::anim::CapturePose& pose : timeline.poses) {
+        if (!pose.hasSound || !pose.sound.resolved) {
+            continue;
+        }
+        auto found = clips.find(pose.sound.resource);
+        if (found == clips.end()) {
+            continue;
+        }
+        cues.push_back(swchess::audio::Cue{pose.sound.startMs, &found->second,
+                                           swchess::audio::Channel::Effects, 1.0f, false});
     }
+    if (timeline.hasEndSound && timeline.endSound.resolved) {
+        auto found = clips.find(timeline.endSound.resource);
+        if (found != clips.end()) {
+            cues.push_back(swchess::audio::Cue{timeline.endSound.startMs, &found->second,
+                                               swchess::audio::Channel::Effects, 1.0f, false});
+        }
+    }
+    swchess::audio::CueScheduler scheduler(&mixer, std::move(cues));
 
     std::string backgroundName = options.background;
     swchess::Image background = swchess::loadBmp(backgroundPath(options.cdDir, backgroundName));
     SDL_Texture* backgroundTexture =
         makeTexture(renderer, background.rgba.data(), background.width, background.height);
 
-    using Clock = std::chrono::steady_clock;
-    Clock::time_point started = Clock::now();
-    std::int64_t pausedAtMillis = 0;
-    bool playing = false;
-    std::size_t index = 0;
+    swchess::anim::CapturePlayer player;
 
-    auto elapsedMillis = [&]() -> std::int64_t {
-        if (!playing) {
-            return pausedAtMillis;
-        }
-        return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point origin = Clock::now();
+    auto wallMs = [&]() -> std::int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - origin).count();
     };
-    auto seekTo = [&](std::size_t target) {
-        index = target;
-        pausedAtMillis = static_cast<std::int64_t>(target) * kFrameMillis;
-        started = Clock::now() - std::chrono::milliseconds(pausedAtMillis);
+
+    // The animation clock. It stands still while paused and jumps when the
+    // viewer steps a pose, and the player and the cue scheduler both read it.
+    std::int64_t animationMs = 0;
+    std::int64_t anchorWallMs = wallMs();
+    bool playing = true;
+    player.start(&timeline, 0);
+
+    auto seekTo = [&](std::int64_t ms) {
+        if (ms < 0) ms = 0;
+        animationMs = ms;
+        anchorWallMs = wallMs();
+        player.start(&timeline, 0);
+        scheduler.reset();
+        scheduler.skipTo(ms);
+        mixer.stopAll();
     };
 
     bool running = true;
+    swchess::anim::DrawState drawn;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -229,27 +306,44 @@ int runViewer(const Options& options) {
                 if (key == SDLK_ESCAPE) {
                     running = false;
                 } else if (key == SDLK_SPACE) {
-                    if (playing) {
-                        pausedAtMillis = elapsedMillis();
-                        playing = false;
-                    } else {
-                        started = Clock::now() - std::chrono::milliseconds(pausedAtMillis);
-                        playing = true;
+                    playing = !playing;
+                    anchorWallMs = wallMs();
+                } else if (key == SDLK_RIGHT || key == SDLK_LEFT) {
+                    // Step to the next or previous pose start time.
+                    playing = false;
+                    std::size_t at = 0;
+                    for (std::size_t i = 0; i < timeline.poses.size(); ++i) {
+                        if (timeline.poses[i].startMs <= animationMs) {
+                            at = i;
+                        }
                     }
-                } else if (key == SDLK_RIGHT) {
-                    playing = false;
-                    seekTo(index + 1 < frames.size() ? index + 1 : index);
-                } else if (key == SDLK_LEFT) {
-                    playing = false;
-                    seekTo(index > 0 ? index - 1 : 0);
+                    if (key == SDLK_RIGHT && at + 1 < timeline.poses.size()) {
+                        ++at;
+                    } else if (key == SDLK_LEFT && at > 0) {
+                        --at;
+                    }
+                    seekTo(timeline.poses[at].startMs);
                 } else if (key == SDLK_R) {
                     seekTo(0);
+                    playing = true;
+                } else if (key == SDLK_S) {
+                    // Skip the capture. The player reports the cues that never
+                    // played and the scheduler drops them too.
+                    std::vector<swchess::anim::SoundEvent> cancelled = player.skip();
+                    std::printf("skipped %s, %zu cues cancelled\n", timeline.name.c_str(),
+                                cancelled.size());
+                    animationMs = timeline.endMs;
+                    anchorWallMs = wallMs();
+                    scheduler.skipTo(timeline.endMs);
+                    mixer.stopAll();
+                    playing = false;
                 } else if (key >= SDLK_1 && key <= SDLK_9) {
                     int pick = static_cast<int>(key - SDLK_1);
                     if (pick < kBackgroundCount) {
                         backgroundName = kBackgrounds[pick];
                         try {
-                            background = swchess::loadBmp(backgroundPath(options.cdDir, backgroundName));
+                            background =
+                                swchess::loadBmp(backgroundPath(options.cdDir, backgroundName));
                             SDL_DestroyTexture(backgroundTexture);
                             backgroundTexture = makeTexture(renderer, background.rgba.data(),
                                                             background.width, background.height);
@@ -261,19 +355,21 @@ int runViewer(const Options& options) {
             }
         }
 
-        std::int64_t millis = elapsedMillis();
+        std::int64_t now = wallMs();
         if (playing) {
-            std::size_t wanted = static_cast<std::size_t>(millis / kFrameMillis);
-            if (wanted >= frames.size()) {
-                wanted = frames.size() - 1;
-                playing = false;
-                pausedAtMillis = static_cast<std::int64_t>(wanted) * kFrameMillis;
-                millis = pausedAtMillis;
-            }
-            index = wanted;
+            animationMs += now - anchorWallMs;
+        }
+        anchorWallMs = now;
+
+        swchess::anim::PlayerUpdate update = player.advance(animationMs);
+        scheduler.advance(animationMs);
+        if (update.draw.visible || update.finished) {
+            drawn = update.draw;
+        }
+        if (update.finished) {
+            playing = false;
         }
 
-        const FrameTexture& frame = frames[index];
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         if (backgroundTexture != nullptr) {
@@ -281,21 +377,25 @@ int runViewer(const Options& options) {
                             static_cast<float>(background.height)};
             SDL_RenderTexture(renderer, backgroundTexture, nullptr, &whole);
         }
-        SDL_FRect target{static_cast<float>((kLogicalWidth - frame.width) / 2),
-                         static_cast<float>((kLogicalHeight - frame.height) / 2),
-                         static_cast<float>(frame.width), static_cast<float>(frame.height)};
-        SDL_RenderTexture(renderer, frame.texture, nullptr, &target);
+        if (drawn.visible && drawn.record != nullptr) {
+            SDL_FRect target{static_cast<float>(drawn.x), static_cast<float>(drawn.y),
+                             static_cast<float>(drawn.width), static_cast<float>(drawn.height)};
+            SDL_RenderTexture(renderer, textures[drawn.record->offset], nullptr, &target);
+        }
         SDL_RenderPresent(renderer);
 
         char title[256];
         std::snprintf(title, sizeof(title),
-                      "swchess-viewer  %s over %s  frame %zu/%zu  record 0x%x  %lld ms  %s",
-                      options.capture.c_str(), backgroundName.c_str(), index + 1, frames.size(),
-                      frame.offset, static_cast<long long>(millis), playing ? "playing" : "paused");
+                      "swchess-viewer  %s over %s  pose %zu/%zu  %lld/%lld ms  %s  audio %s",
+                      options.capture.c_str(), backgroundName.c_str(), drawn.poseIndex,
+                      timeline.poses.size(), static_cast<long long>(animationMs),
+                      static_cast<long long>(timeline.endMs), playing ? "playing" : "paused",
+                      mixer.driverName().c_str());
         SDL_SetWindowTitle(window, title);
     }
 
-    for (SDL_Texture* texture : owned) {
+    for (auto& [offset, texture] : textures) {
+        (void)offset;
         SDL_DestroyTexture(texture);
     }
     if (backgroundTexture != nullptr) {
@@ -315,6 +415,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
+        if (!options.dumpTimeline.empty()) {
+            return dumpTimeline(options);
+        }
         if (options.dumpFrame >= 0) {
             return dumpFrame(options);
         }

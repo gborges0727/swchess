@@ -39,7 +39,8 @@ target_link_libraries(swchess_render PUBLIC swchess_assets)
 target_compile_options(swchess_render PRIVATE -Wall -Wextra)
 
 add_executable(swchess-viewer src/app/viewer.cpp)
-target_link_libraries(swchess-viewer PRIVATE swchess_render SDL3::SDL3)
+target_link_libraries(swchess-viewer PRIVATE swchess_render swchess_anim swchess_audio
+                      SDL3::SDL3)
 target_compile_options(swchess-viewer PRIVATE -Wall -Wextra)
 
 # The chess rules module arrives separately. Build it when it is present.
@@ -52,7 +53,11 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/src/audio/CMakeLists.txt)
   add_subdirectory(src/audio)
 endif()
 
+# The capture animation module resolves timelines and plays them. Its own
+# test registers with CTest, so testing turns on before the subdirectory.
 include(CTest)
+add_subdirectory(src/anim)
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
