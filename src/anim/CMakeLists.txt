@@ -24,6 +24,16 @@ if(NOT SWCHESS_CD_DIR)
   set(SWCHESS_CD_DIR "${SWCHESS_ANIM_REPO_ROOT}/original/win3x/cd")
 endif()
 
+# Where tools/extract writes the decoded artwork and tools/interp writes the
+# 60 frames per second sequences.
+if(NOT SWCHESS_ASSETS_DIR)
+  set(SWCHESS_ASSETS_DIR "${SWCHESS_ANIM_REPO_ROOT}/assets")
+endif()
+
+# interp.cpp reads manifest.json, and png_read.cpp inflates the frame PNGs.
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+
 # A standalone build has no swchess_assets target, so build the decoders it
 # needs from the same sources the top-level project uses.
 if(NOT TARGET swchess_assets)
@@ -42,19 +52,22 @@ endif()
 
 add_library(swchess_anim STATIC
   capture.cpp
+  interp.cpp
   player.cpp
+  png_read.cpp
   walk.cpp
 )
 # Headers include as "anim/capture.h", so the include root is src.
 target_include_directories(swchess_anim PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(swchess_anim PUBLIC swchess_assets)
+target_link_libraries(swchess_anim PUBLIC swchess_assets nlohmann_json::nlohmann_json
+                      ZLIB::ZLIB)
 target_compile_options(swchess_anim PRIVATE -Wall -Wextra)
 
 add_executable(anim_test anim_test.cpp)
 target_link_libraries(anim_test PRIVATE swchess_anim)
 target_compile_options(anim_test PRIVATE -Wall -Wextra)
 
-add_test(NAME anim_test COMMAND anim_test "${SWCHESS_CD_DIR}")
+add_test(NAME anim_test COMMAND anim_test "${SWCHESS_CD_DIR}" "${SWCHESS_ASSETS_DIR}")
 set_tests_properties(anim_test PROPERTIES TIMEOUT 300)
 
 add_executable(walk_test walk_test.cpp)

@@ -11,14 +11,16 @@
 #include <vector>
 
 #include "anim/capture.h"
+#include "anim/interp.h"
 
 namespace swchess::anim {
 
 // Which set of images the player picks from.
 //
 // Original120ms uses the authored poses at the recovered frame delay.
-// Interpolated60 will pick the generated 60 frames per second images once
-// milestone 4 produces them. The player rejects it for now.
+// Interpolated60 picks the generated 60 frames per second pictures that
+// tools/interp writes. It needs an InterpSequence, so the player rejects it
+// until start receives one.
 enum class Cadence {
     Original120ms,
     Interpolated60,
@@ -37,10 +39,17 @@ struct SoundEvent {
     bool cancelled = false;  // true when skip ended the capture before this cue
 };
 
-// The pose the caller should draw.
+// The picture the caller should draw.
+//
+// The original cadence fills `record` with a decoded ANX pose. The
+// interpolated cadence fills `frame` with an RGBA picture instead. Exactly one
+// of the two is set whenever the player has something on the canvas. A blank
+// interpolated frame sets `frame` and leaves `visible` false, which is what the
+// original cadence does before the first pose reaches the screen.
 struct DrawState {
     bool visible = false;
     const AnxRecord* record = nullptr;
+    const InterpFrame* frame = nullptr;
     int x = 0;
     int y = 0;
     int width = 0;
@@ -59,12 +68,24 @@ class CapturePlayer {
 public:
     CapturePlayer() = default;
 
+    // Switches which pictures the player draws. The animation clock and the
+    // cues that already fired stay where they are, so a toggle mid capture
+    // neither rewinds nor replays. Throws when Interpolated60 is asked for and
+    // start received no InterpSequence.
     void setCadence(Cadence cadence);
     Cadence cadence() const { return cadence_; }
 
     // Begin `timeline` at wall time `nowMs`. The timeline must outlive the
-    // player. Passing null stops the player.
+    // player. Passing null stops the player. This form has no interpolated
+    // pictures, so the cadence falls back to Original120ms.
     void start(const CaptureTimeline* timeline, std::int64_t nowMs);
+
+    // The same, with the 60 frames per second pictures for the same capture.
+    // Both must outlive the player. `interp` may be null, which behaves like
+    // the form above. The two must agree: same end time, and the same sound
+    // cues at the same times in the same order. Throws when they do not.
+    void start(const CaptureTimeline* timeline, const InterpSequence* interp,
+               std::int64_t nowMs);
 
     // Move the clock to `nowMs` and report what changed. Time never runs
     // backwards here: a smaller `nowMs` than the last one leaves the clock
@@ -82,6 +103,7 @@ public:
     std::int64_t elapsedMs() const { return elapsedMs_; }
 
     const CaptureTimeline* timeline() const { return timeline_; }
+    const InterpSequence* interp() const { return interp_; }
 
     // Every cue the timeline holds, in time order.
     const std::vector<SoundEvent>& schedule() const { return schedule_; }
@@ -93,6 +115,7 @@ private:
     DrawState drawAt(std::int64_t ms) const;
 
     const CaptureTimeline* timeline_ = nullptr;
+    const InterpSequence* interp_ = nullptr;
     Cadence cadence_ = Cadence::Original120ms;
     std::vector<SoundEvent> schedule_;
     std::size_t next_ = 0;

@@ -8,7 +8,12 @@
 #include <string>
 #include <vector>
 
+#include <chrono>
+#include <cmath>
+#include <optional>
+
 #include "anim/capture.h"
+#include "anim/interp.h"
 #include "anim/player.h"
 
 namespace {
@@ -22,6 +27,14 @@ void check(bool ok, const std::string& what) {
     }
 }
 
+// Names one cue by the pose that carries it and the time it fires.
+std::string cueKey(const swchess::anim::SoundEvent& event) {
+    char key[64];
+    std::snprintf(key, sizeof(key), "%zu@%lld", event.poseIndex,
+                  static_cast<long long>(event.timeMs));
+    return key;
+}
+
 // Runs the player from before the start to past the end in fixed steps and
 // counts how many times each cue fires.
 std::map<std::string, int> sweep(const swchess::anim::CaptureTimeline& timeline, double stepMs) {
@@ -33,10 +46,7 @@ std::map<std::string, int> sweep(const swchess::anim::CaptureTimeline& timeline,
     while (true) {
         swchess::anim::PlayerUpdate update = player.advance(static_cast<std::int64_t>(now));
         for (const swchess::anim::SoundEvent& event : update.sounds) {
-            char key[64];
-            std::snprintf(key, sizeof(key), "%zu@%lld", event.poseIndex,
-                          static_cast<long long>(event.timeMs));
-            fired[key] += 1;
+            fired[cueKey(event)] += 1;
         }
         if (static_cast<std::int64_t>(now) > limit) {
             break;
@@ -50,10 +60,11 @@ std::map<std::string, int> sweep(const swchess::anim::CaptureTimeline& timeline,
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: anim_test <cd directory>\n");
+        std::fprintf(stderr, "usage: anim_test <cd directory> [assets directory]\n");
         return 2;
     }
     const std::string cdDir = argv[1];
+    const std::string assetsDir = argc > 2 ? argv[2] : "assets";
 
     try {
         const swchess::anim::SoundCatalog& sounds = swchess::anim::sharedSoundCatalog(cdDir);
@@ -147,6 +158,150 @@ int main(int argc, char** argv) {
                 check(count == 1, name + " fires " + key + " once at 1 ms steps");
             }
             check(coarse == fine, name + " fires the same cues at both step sizes");
+        }
+
+        // The 60 frames per second sequence for BBWB, when the interpolation
+        // run has written it. Other captures are still being generated, so a
+        // missing manifest is not a failure.
+        {
+            const auto before = std::chrono::steady_clock::now();
+            std::optional<swchess::anim::InterpSequence> interp =
+                swchess::anim::loadInterp(assetsDir, "BBWB");
+            const double seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - before).count();
+            if (!interp.has_value()) {
+                std::printf("no interp60 manifest for BBWB under %s, skipping those checks\n",
+                            assetsDir.c_str());
+            } else {
+                std::printf("loaded %zu BBWB interpolated frames in %.3f seconds\n",
+                            interp->frames.size(), seconds);
+                check(seconds < 2.0, "BBWB's interpolated frames load in under 2 seconds");
+                check(interp->frames.size() == 653, "BBWB has 653 interpolated frames");
+                check(interp->fps == 60, "the manifest says 60 frames per second");
+
+                double total = 0.0;
+                for (const swchess::anim::InterpFrame& frame : interp->frames) {
+                    total += frame.durationMs;
+                }
+                check(std::fabs(total - static_cast<double>(interp->endMs)) < 1e-6,
+                      "the frame durations add up to end_ms");
+                check(interp->endMs == bbwb.endMs, "both cadences end at the same time");
+
+                swchess::anim::CapturePlayer plain;
+                plain.start(&bbwb, &interp.value(), 0);
+                swchess::anim::CapturePlayer fast;
+                fast.start(&bbwb, &interp.value(), 0);
+                fast.setCadence(swchess::anim::Cadence::Interpolated60);
+                check(fast.cadence() == swchess::anim::Cadence::Interpolated60,
+                      "the player accepts the interpolated cadence once it has pictures");
+
+                // start already refuses a mismatch, so this repeats the
+                // comparison in the test's own terms.
+                std::size_t cued = 0;
+                bool sameCues = true;
+                for (const swchess::anim::SoundEvent& event : plain.schedule()) {
+                    if (event.poseIndex == swchess::anim::SoundEvent::kEndSoundIndex) {
+                        sameCues = sameCues && interp->hasFinalSound &&
+                                   interp->finalSound.name == event.sound->resource;
+                        continue;
+                    }
+                    if (cued >= interp->sounds.size()) {
+                        sameCues = false;
+                        break;
+                    }
+                    const swchess::anim::InterpSound& mine = interp->sounds[cued];
+                    ++cued;
+                    sameCues = sameCues && mine.name == event.sound->resource &&
+                               mine.startMs == event.timeMs && mine.poseIndex == event.poseIndex;
+                }
+                check(sameCues && cued == interp->sounds.size(),
+                      "both cadences name the same cues at the same times");
+                check(cued == 10, "BBWB carries ten pose cues");
+
+                // Sweep both players together and watch what they return.
+                const double step = 1000.0 / 60.0;
+                const std::int64_t limit = bbwb.endMs + 500;
+                std::map<std::string, int> plainFired;
+                std::map<std::string, int> fastFired;
+                bool framesOnTime = true;
+                bool sawFrame = false;
+                double now = 0.0;
+                while (true) {
+                    const std::int64_t ms = static_cast<std::int64_t>(now);
+                    for (const swchess::anim::SoundEvent& event : plain.advance(ms).sounds) {
+                        plainFired[cueKey(event)] += 1;
+                    }
+                    swchess::anim::PlayerUpdate update = fast.advance(ms);
+                    for (const swchess::anim::SoundEvent& event : update.sounds) {
+                        fastFired[cueKey(event)] += 1;
+                    }
+                    if (update.draw.frame != nullptr) {
+                        sawFrame = true;
+                        const double drift = static_cast<double>(ms) - update.draw.frame->tMs;
+                        if (drift < 0.0 || drift > step) {
+                            framesOnTime = false;
+                        }
+                    } else {
+                        check(!update.draw.visible, "a player with no frame draws nothing");
+                    }
+                    if (ms > limit) {
+                        break;
+                    }
+                    now += step;
+                }
+                check(sawFrame, "the interpolated player returns frames");
+                check(framesOnTime,
+                      "every interpolated frame sits within one frame time of the sweep");
+                check(plainFired == fastFired, "both cadences fire the same cues");
+                for (const auto& [key, count] : fastFired) {
+                    check(count == 1, "the interpolated cadence fires " + key + " once");
+                }
+
+                // Toggling mid capture keeps the clock and replays nothing.
+                swchess::anim::CapturePlayer toggling;
+                toggling.start(&bbwb, &interp.value(), 0);
+                std::map<std::string, int> toggled;
+                now = 0.0;
+                bool switched = false;
+                while (true) {
+                    const std::int64_t ms = static_cast<std::int64_t>(now);
+                    for (const swchess::anim::SoundEvent& event : toggling.advance(ms).sounds) {
+                        toggled[cueKey(event)] += 1;
+                    }
+                    if (!switched && ms >= bbwb.endMs / 2) {
+                        const std::int64_t held = toggling.elapsedMs();
+                        const std::size_t fired = toggling.firedCount();
+                        toggling.setCadence(swchess::anim::Cadence::Interpolated60);
+                        check(toggling.elapsedMs() == held, "the toggle keeps the animation time");
+                        check(toggling.firedCount() == fired, "the toggle rewinds no cue");
+                        switched = true;
+                    }
+                    if (ms > limit) {
+                        break;
+                    }
+                    now += step;
+                }
+                check(switched, "the sweep reached the toggle");
+                check(toggled == plainFired, "toggling mid capture fires the same cues");
+                for (const auto& [key, count] : toggled) {
+                    check(count == 1, "a toggled capture fires " + key + " once");
+                }
+
+                // Skipping behaves the same under either cadence.
+                swchess::anim::CapturePlayer skipper;
+                skipper.start(&bbwb, &interp.value(), 0);
+                skipper.setCadence(swchess::anim::Cadence::Interpolated60);
+                skipper.advance(2000);
+                const std::size_t firedBeforeSkip = skipper.firedCount();
+                std::vector<swchess::anim::SoundEvent> dropped = skipper.skip();
+                check(skipper.isFinished(), "skip finishes the interpolated capture");
+                check(firedBeforeSkip + dropped.size() == skipper.schedule().size(),
+                      "skip cancels every interpolated cue that had not fired");
+                check(skipper.elapsedMs() == bbwb.endMs, "skip moves the clock to the end");
+                swchess::anim::PlayerUpdate after = skipper.advance(bbwb.endMs + 1000);
+                check(!after.draw.visible && after.draw.frame == nullptr,
+                      "a skipped interpolated capture draws nothing");
+            }
         }
 
         // Skipping ends the capture and reports what never played.

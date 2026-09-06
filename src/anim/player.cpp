@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 namespace swchess::anim {
 
@@ -16,14 +17,62 @@ const char* cadenceName(Cadence cadence) {
 }
 
 void CapturePlayer::setCadence(Cadence cadence) {
-    if (cadence == Cadence::Interpolated60) {
-        throw std::runtime_error("the interpolated cadence has no images yet");
+    if (cadence == Cadence::Interpolated60 && interp_ == nullptr) {
+        throw std::runtime_error("the interpolated cadence has no pictures for this capture");
     }
+    // The clock, the pose cursor and the fired count all stay put, so the
+    // caller sees the same animation time and no cue plays twice.
     cadence_ = cadence;
 }
 
+namespace {
+
+// Refuses an interpolated sequence whose cues differ from the timeline's. The
+// tool copies the cues out of the same timeline, so a mismatch means the frames
+// on disk belong to a different capture or a stale extraction.
+void requireSameCues(const CaptureTimeline& timeline, const InterpSequence& interp,
+                     const std::vector<SoundEvent>& schedule) {
+    const std::string where = timeline.name + " interp60";
+    if (interp.endMs != timeline.endMs) {
+        throw std::runtime_error(where + " ends at a different time than the timeline");
+    }
+    std::size_t at = 0;
+    for (const SoundEvent& event : schedule) {
+        if (event.poseIndex == SoundEvent::kEndSoundIndex) {
+            if (!interp.hasFinalSound || interp.finalSound.name != event.sound->resource) {
+                throw std::runtime_error(where + " disagrees about the final sound");
+            }
+            continue;
+        }
+        if (at >= interp.sounds.size()) {
+            throw std::runtime_error(where + " is missing a sound cue");
+        }
+        const InterpSound& mine = interp.sounds[at];
+        ++at;
+        if (mine.poseIndex != event.poseIndex || mine.startMs != event.timeMs ||
+            mine.name != event.sound->resource || mine.durationMs != event.sound->durationMs) {
+            throw std::runtime_error(where + " disagrees about the cue on pose " +
+                                     std::to_string(event.poseIndex));
+        }
+    }
+    if (at != interp.sounds.size()) {
+        throw std::runtime_error(where + " carries a sound cue the timeline does not");
+    }
+    if (interp.hasFinalSound && !timeline.hasEndSound) {
+        throw std::runtime_error(where + " carries a final sound the timeline does not");
+    }
+}
+
+}  // namespace
+
 void CapturePlayer::start(const CaptureTimeline* timeline, std::int64_t nowMs) {
+    start(timeline, nullptr, nowMs);
+}
+
+void CapturePlayer::start(const CaptureTimeline* timeline, const InterpSequence* interp,
+                          std::int64_t nowMs) {
     timeline_ = timeline;
+    interp_ = interp;
     schedule_.clear();
     next_ = 0;
     pose_ = 0;
@@ -31,6 +80,8 @@ void CapturePlayer::start(const CaptureTimeline* timeline, std::int64_t nowMs) {
     elapsedMs_ = 0;
     finished_ = timeline == nullptr || timeline->poses.empty();
     if (timeline == nullptr) {
+        interp_ = nullptr;
+        cadence_ = Cadence::Original120ms;
         return;
     }
 
@@ -52,11 +103,33 @@ void CapturePlayer::start(const CaptureTimeline* timeline, std::int64_t nowMs) {
     }
     std::stable_sort(schedule_.begin(), schedule_.end(),
                      [](const SoundEvent& a, const SoundEvent& b) { return a.timeMs < b.timeMs; });
+
+    if (interp_ != nullptr) {
+        requireSameCues(*timeline, *interp_, schedule_);
+    } else if (cadence_ == Cadence::Interpolated60) {
+        cadence_ = Cadence::Original120ms;
+    }
 }
 
 DrawState CapturePlayer::drawAt(std::int64_t ms) const {
     DrawState state;
     if (timeline_ == nullptr || timeline_->poses.empty()) {
+        return state;
+    }
+    if (cadence_ == Cadence::Interpolated60 && interp_ != nullptr) {
+        const InterpFrame* frame = interp_->frameAt(static_cast<double>(ms));
+        if (frame == nullptr) {
+            return state;
+        }
+        state.frame = frame;
+        state.visible = frame->kind != InterpKind::Blank;
+        state.x = interp_->frameRect.x;
+        state.y = interp_->frameRect.y;
+        state.width = interp_->frameRect.width;
+        state.height = interp_->frameRect.height;
+        if (!frame->source.empty()) {
+            state.poseIndex = static_cast<std::size_t>(frame->source.front());
+        }
         return state;
     }
     // The pose the last one replaced stays on the canvas until its successor
