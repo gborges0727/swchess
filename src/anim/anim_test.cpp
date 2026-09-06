@@ -10,7 +10,10 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <sstream>
 
 #include "anim/capture.h"
 #include "anim/interp.h"
@@ -25,6 +28,18 @@ void check(bool ok, const std::string& what) {
         std::fprintf(stderr, "FAIL %s\n", what.c_str());
         ++failures;
     }
+}
+
+std::string readFile(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream text;
+    text << file.rdbuf();
+    return text.str();
+}
+
+void writeFile(const std::string& path, const std::string& text) {
+    std::ofstream file(path, std::ios::binary);
+    file << text;
 }
 
 // Names one cue by the pose that carries it and the time it fires.
@@ -352,6 +367,65 @@ int main(int argc, char** argv) {
                 bpwnPlayer.start(&bpwn, &bpwnInterp.value(), 0);
                 check(bpwnPlayer.interp() == &bpwnInterp.value(),
                       "BPWN's timeline and interp60 sequence agree, so start accepts both");
+            }
+        }
+
+        // A manifest whose cue times do not match the timeline. The player
+        // says so on stderr and plays the authored poses rather than throwing,
+        // so an extraction left behind by an older run cannot end the game.
+        {
+            const std::string source = assetsDir + "/captures/BBWB/interp60/manifest.json";
+            if (!std::filesystem::exists(source)) {
+                std::printf("no interp60 manifest for BBWB under %s, skipping the stale check\n",
+                            assetsDir.c_str());
+            } else {
+                const std::filesystem::path staleAssets =
+                    std::filesystem::temp_directory_path() / "swchess_anim_test_stale";
+                const std::filesystem::path stale = staleAssets / "captures/BBWB/interp60";
+                std::filesystem::remove_all(staleAssets);
+                std::filesystem::create_directories(stale);
+                // Only the manifest is copied and edited. The frames it names
+                // are hard linked, because loadInterp reads every one of them.
+                for (const std::filesystem::directory_entry& entry :
+                     std::filesystem::directory_iterator(assetsDir + "/captures/BBWB/interp60")) {
+                    if (entry.path().extension() == ".png") {
+                        std::filesystem::create_hard_link(entry.path(),
+                                                          stale / entry.path().filename());
+                    }
+                }
+                // Move the first cue of the first sound event to 999999 ms.
+                // The reader takes a cue's time from the sound's own t_ms, so
+                // that is the number to change.
+                std::string text = readFile(source);
+                const std::size_t at = text.find("\"sounds\":");
+                const std::size_t soundAt = text.find("\"sound\":", at);
+                const std::size_t timeAt = text.find("\"t_ms\":", soundAt);
+                check(at != std::string::npos && timeAt != std::string::npos,
+                      "BBWB's manifest holds a sound cue with a start time");
+                const std::size_t from = text.find(' ', timeAt) + 1;
+                const std::size_t to = text.find_first_of(",}", from);
+                text = text.substr(0, from) + "999999" + text.substr(to);
+                writeFile((stale / "manifest.json").string(), text);
+
+                std::optional<swchess::anim::InterpSequence> wrong =
+                    swchess::anim::loadInterp(staleAssets.string(), "BBWB");
+                check(wrong.has_value(), "the edited manifest still loads");
+                if (wrong.has_value()) {
+                    swchess::anim::CapturePlayer stubborn;
+                    stubborn.setCadence(swchess::anim::Cadence::Original120ms);
+                    std::printf("expect one complaint about BBWB's cue times next:\n");
+                    stubborn.start(&bbwb, &wrong.value(), 0);
+                    check(stubborn.interp() == nullptr,
+                          "a manifest whose cue times disagree is dropped, not thrown on");
+                    check(stubborn.cadence() == swchess::anim::Cadence::Original120ms,
+                          "the player falls back to the original cadence");
+                    swchess::anim::PlayerUpdate update = stubborn.advance(3000);
+                    check(update.draw.visible && update.draw.record != nullptr,
+                          "the fallback draws an authored pose");
+                    check(update.draw.frame == nullptr,
+                          "the fallback draws no interpolated frame");
+                }
+                std::filesystem::remove_all(staleAssets);
             }
         }
 

@@ -1,6 +1,7 @@
 #include "anim/player.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 
@@ -66,7 +67,13 @@ void requireSameCues(const CaptureTimeline& timeline, const InterpSequence& inte
         if (mine.poseIndex != event.poseIndex || mine.startMs != event.timeMs ||
             mine.name != event.sound->resource || mine.durationMs != event.sound->durationMs) {
             throw std::runtime_error(where + " disagrees about the cue on pose " +
-                                     std::to_string(event.poseIndex));
+                                     std::to_string(event.poseIndex) + ": manifest pose " +
+                                     std::to_string(mine.poseIndex) + " at " +
+                                     std::to_string(mine.startMs) + " ms " + mine.name + " " +
+                                     std::to_string(mine.durationMs) + " ms, timeline at " +
+                                     std::to_string(event.timeMs) + " ms " +
+                                     event.sound->resource + " " +
+                                     std::to_string(event.sound->durationMs) + " ms");
         }
     }
     if (at != interp.sounds.size()) {
@@ -129,8 +136,18 @@ void CapturePlayer::start(const CaptureTimeline* timeline, const InterpSequence*
                      [](const SoundEvent& a, const SoundEvent& b) { return a.timeMs < b.timeMs; });
 
     if (interp_ != nullptr) {
-        requireSameCues(*timeline, *interp_, schedule_);
-    } else if (cadence_ == Cadence::Interpolated60) {
+        try {
+            requireSameCues(*timeline, *interp_, schedule_);
+        } catch (const std::exception& problem) {
+            // A manifest left behind by an older extraction is not worth
+            // ending the game for. The capture plays the authored poses at
+            // the original cadence and the frames on disk go unused.
+            std::fprintf(stderr, "swchess: %s, playing the original cadence instead\n",
+                         problem.what());
+            interp_ = nullptr;
+        }
+    }
+    if (interp_ == nullptr && cadence_ == Cadence::Interpolated60) {
         cadence_ = Cadence::Original120ms;
     }
 }

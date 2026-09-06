@@ -65,3 +65,23 @@ def plan(spec, fps):
         nxt = entries[i + 1]["t"] if i + 1 < len(entries) else end
         entry["duration"] = nxt - entry["t"]
     return entries
+
+
+def sound_start(pose):
+    """When a pose's sound starts, in milliseconds.
+
+    resolved.json gives every sound its own t_ms. A sync sound starts at the
+    top of its iteration and blocks, so it starts before the pose it belongs
+    to appears. Older files wrote no t_ms inside the sound, and for those the
+    pose time is the best guess left.
+    """
+    sound = pose["sound"]
+    if "t_ms" in sound and sound["t_ms"] is not None:
+        return sound["t_ms"]
+    return pose["t_ms"]
+
+
+def sound_events(spec):
+    """The manifest's `sounds` list: one entry per sounding pose, in time order."""
+    return [{"pose": p["index"], "t_ms": sound_start(p), "sound": p["sound"]}
+            for p in spec["poses"] if p.get("sound")]

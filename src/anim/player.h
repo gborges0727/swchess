@@ -83,7 +83,10 @@ public:
     // The same, with the 60 frames per second pictures for the same capture.
     // Both must outlive the player. `interp` may be null, which behaves like
     // the form above. The two must agree: same end time, and the same sound
-    // cues at the same times in the same order. Throws when they do not.
+    // cues at the same times in the same order. When they do not, the player
+    // writes one line to stderr, drops the pictures, and falls back to
+    // Original120ms rather than throwing, so a stale manifest on disk cannot
+    // end the game.
     void start(const CaptureTimeline* timeline, const InterpSequence* interp,
                std::int64_t nowMs);
 

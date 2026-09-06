@@ -81,18 +81,21 @@ non-zero if any of them changes.
   `CM.INI [defaults]`. A blocking sound earlier in the run (pose 0's included)
   pushes every later pose out by however long it stalled the loop. Pose 0's own
   sound, when it has one, plays and is never drawn over, so it is recorded
-  separately in the top-level `pre_sounds` list (each entry's `t_ms`, `name`,
-  `mode` and `duration_ms` match a pose's `sound` fields) instead of being
-  dropped.
+  separately in the top-level `pre_sounds` list (each entry holds the same
+  `t_ms`, `name`, `mode` and `duration_ms` a pose's `sound` holds) instead of
+  being dropped.
 - After the last pose the player waits `[BBWB_OFFSET] hold` milliseconds, or
   1000 when the key is absent, then plays `[BBWB_OFFSET] wav` and waits for it
   to finish. `end_ms` is the moment after all of that, when the last pose is
-  erased. Only `BKWR` and `BQWN` set that final wav.
+  erased. `final_wav` gives that sound its own `t_ms`, the moment the hold ends
+  and the call starts, so `t_ms` plus `duration_ms` equals `end_ms`. Only
+  `BKWR` and `BQWN` set that final wav.
 - The 640 by 480 backdrop is the canvas, so `canvas` is the same rectangle in
   every file. Twenty captures place at least one pose partly off it, and the
   original clips rather than failing.
 
-A frame's `sound` says what `pause=` in its INI section does.
+A pose's `sound` holds four fields: `t_ms`, `name`, `mode` and `duration_ms`.
+The `mode` says what `pause=` in the pose's INI section does.
 
 | `pause` | `mode` | What happens |
 | --- | --- | --- |
@@ -100,10 +103,35 @@ A frame's `sound` says what `pause=` in its INI section does.
 | 1 | `sync` | The animation stops until the sound finishes |
 | 2 | `wait_previous` | The sound starts, and the next frame that has a sound waits for it |
 
+A sound's `t_ms` is when the player calls `sndPlaySound`, and a pose's `t_ms` is
+when that pose reaches the screen. The two differ whenever a sound blocks, so
+each carries its own number. The player reads the clock at the top of an
+iteration and starts the sound before it draws anything.
+
+- An `async` sound starts at the top of its own iteration and nothing waits, so
+  its `t_ms` and its pose's `t_ms` are the same millisecond.
+- A `sync` sound starts at the top of its own iteration and then blocks for
+  `duration_ms`, so its pose appears `duration_ms` later than the sound started.
+  `BNWN` pose 16 carries `GRUNT2.WAV` for 1212 ms. The sound's `t_ms` is 1920 and
+  the pose's is 3132.
+- A `wait_previous` sound starts at the top of its own iteration and nothing
+  waits for it there. Its `pause=2` makes the *next* sounding frame spin until
+  it ends.
+
+That spin is what moves a sound's `t_ms` away from the top of the iteration. Any
+sounding frame, whatever its own `pause=`, first waits out an earlier `pause=2`
+sound that has not finished, and its own sound starts the moment that wait ends.
+A sound whose iteration begins after the earlier sound already ended waits for
+nothing and starts at the top of its iteration.
+
 The player ignores a `pause=` that has no `wav=` beside it, so `[WBBR_001]` and
 `[WKBK_003]` change nothing. Sounds stall the loop in 30 of the 72 captures.
 `timeline.json` records how long the loop stalled as `blocking_stall_ms` and how
 much later that pushed `end_ms` as `blocking_added_ms`.
+
+`tests/timeline_parity.py` compares every pose's sound name, mode and `t_ms`
+against `swchess-viewer --dump-timeline` across all 72 captures, so the Python
+extractor and the C++ player cannot drift apart on any of them.
 
 `cuts` is an empty list in every file. A later step fills it.
 

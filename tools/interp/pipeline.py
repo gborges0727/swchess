@@ -259,8 +259,9 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
         "source": entry["source"],
         "s": float(entry["s"]) if entry["s"] is not None else None,
     } for entry, name, start, stop in zip(entries, names, starts, ends)]
-    sounds = [{"pose": p["index"], "t_ms": p["t_ms"], "sound": p["sound"]}
-              for p in spec["poses"] if p.get("sound")]
+    # Each sound event is timed by the sound's own t_ms, not by the pose's, so
+    # a sync sound reaches the manifest at the moment the original starts it.
+    sounds = timeline.sound_events(spec)
     return {
         "capture": capture,
         "fps": fps,
@@ -294,3 +295,35 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
         "sounds": sounds,
         "frames": frames,
     }
+
+
+def refresh_cues(out_dir, resolved_path=None):
+    """Rewrite one manifest's sound cues from resolved.json and nothing else.
+
+    The frames on disk stay where they are and RIFE never runs. Only `sounds`,
+    `pre_sounds` and `final_wav` change, plus the hash that names which
+    resolved.json they came from. Returns True when the file changed.
+    """
+    manifest_path = os.path.join(out_dir, "manifest.json")
+    with open(manifest_path) as fh:
+        manifest = json.load(fh)
+    path = resolved_path or manifest.get("input", {}).get("resolved")
+    if not path or not os.path.exists(path):
+        raise RuntimeError("%s names no resolved.json to read cues from" % manifest_path)
+    with open(path) as fh:
+        spec = json.load(fh)
+
+    before = json.dumps([manifest.get("sounds"), manifest.get("pre_sounds"),
+                         manifest.get("final_wav")], sort_keys=True)
+    manifest["sounds"] = timeline.sound_events(spec)
+    manifest["pre_sounds"] = spec.get("pre_sounds") or []
+    manifest["final_wav"] = spec.get("final_wav")
+    manifest["input"]["resolved"] = path
+    manifest["input"]["resolved_sha256"] = sha256(path)
+    after = json.dumps([manifest["sounds"], manifest["pre_sounds"],
+                        manifest["final_wav"]], sort_keys=True)
+
+    with open(manifest_path, "w") as fh:
+        json.dump(manifest, fh, indent=1)
+        fh.write("\n")
+    return before != after

@@ -113,14 +113,21 @@ def run(out_dir, verbose=True):
     if resolved and os.path.exists(resolved):
         with open(resolved) as fh:
             spec = json.load(fh)
-        want_sounds = [{"pose": p["index"], "t_ms": p["t_ms"], "sound": p["sound"]}
-                       for p in spec["poses"] if p.get("sound")]
+        # Each event is timed by the sound's own t_ms, so a sync cue that
+        # blocks before its pose appears is checked at the moment it starts.
+        want_sounds = timeline.sound_events(spec)
         want_pre = spec.get("pre_sounds") or []
         got_pre = json.loads(json.dumps(manifest["pre_sounds"], default=str))
         if json.loads(json.dumps(want_pre)) != got_pre:
             problems.append("the manifest pre_sounds differ from %s" % resolved)
         else:
             notes.append("%d pre_sounds kept from %s" % (len(want_pre), resolved))
+        want_final = json.loads(json.dumps(spec.get("final_wav")))
+        got_final = json.loads(json.dumps(manifest.get("final_wav"), default=str))
+        if want_final != got_final:
+            problems.append("the manifest final_wav differs from %s" % resolved)
+        else:
+            notes.append("the final sound matches %s" % resolved)
     else:
         want_sounds = None
     got_sounds = json.loads(json.dumps(manifest["sounds"], default=str))
@@ -128,7 +135,8 @@ def run(out_dir, verbose=True):
         if json.loads(json.dumps(want_sounds)) != got_sounds:
             problems.append("the manifest sound events differ from %s" % resolved)
         else:
-            notes.append("all %d sound events kept from %s" % (len(want_sounds), resolved))
+            notes.append("all %d sound events start at the times %s gives them"
+                         % (len(want_sounds), resolved))
     else:
         notes.append("%d sound events in the manifest, the input file was not on disk to compare"
                      % len(got_sounds))

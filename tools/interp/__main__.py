@@ -3,6 +3,7 @@
     python3 -m tools.interp --capture BBWB --assets assets \
         --out assets/captures/BBWB/interp60 [--fps 60] [--dry-run]
     python3 -m tools.interp --check assets/captures/BBWB/interp60
+    python3 -m tools.interp --refresh-cues assets/captures/BBWB/interp60
 """
 
 import argparse
@@ -27,7 +28,14 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true",
                         help="print the plan and run no inference")
     parser.add_argument("--check", metavar="OUT_DIR", help="verify a finished output directory")
+    parser.add_argument("--refresh-cues", metavar="OUT_DIR",
+                        help="rewrite one manifest's sound cues from resolved.json")
     args = parser.parse_args(argv)
+
+    if args.refresh_cues:
+        changed = pipeline.refresh_cues(args.refresh_cues, args.resolved)
+        print("%s: cues %s" % (args.refresh_cues, "rewritten" if changed else "already current"))
+        return 0
 
     if args.check:
         problems = check.run(args.check)

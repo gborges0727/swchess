@@ -212,13 +212,22 @@ int dumpFrame(const Options& options) {
 int dumpTimeline(const Options& options) {
     swchess::anim::CaptureTimeline timeline =
         swchess::anim::loadCapture(options.cdDir, options.dumpTimeline);
-    std::printf("index t_ms x y w h sound mode\n");
+    // `sound` is the WAVE resource the cue resolved to, and `-` when the INI
+    // named nothing the sound library holds. `sound_t_ms` is when the original
+    // calls sndPlaySound, which a sync cue does before its pose appears.
+    std::printf("index t_ms x y w h sound mode sound_t_ms\n");
     for (const swchess::anim::CapturePose& pose : timeline.poses) {
-        const char* cue = pose.hasSound ? pose.sound.cue.c_str() : "-";
-        const char* mode = pose.hasSound ? swchess::anim::soundModeName(pose.sound.mode) : "-";
-        std::printf("%zu %lld %d %d %d %d %s %s\n", pose.index,
+        const bool sounding = pose.hasSound && pose.sound.resolved;
+        const char* cue = sounding ? pose.sound.resource.c_str() : "-";
+        const char* mode = sounding ? swchess::anim::soundModeName(pose.sound.mode) : "-";
+        char startMs[32] = "-";
+        if (sounding) {
+            std::snprintf(startMs, sizeof(startMs), "%lld",
+                          static_cast<long long>(pose.sound.startMs));
+        }
+        std::printf("%zu %lld %d %d %d %d %s %s %s\n", pose.index,
                     static_cast<long long>(pose.startMs), pose.x, pose.y, pose.width, pose.height,
-                    cue, mode);
+                    cue, mode, startMs);
     }
     std::printf("# %s entries %zu poses %zu delay %lld hold %lld offset %d,%d hold_end %lld end %lld\n",
                 timeline.name.c_str(), timeline.entryCount, timeline.poses.size(),

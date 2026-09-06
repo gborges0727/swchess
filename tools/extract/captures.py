@@ -93,9 +93,16 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
     src/anim/capture.cpp's loop exactly: the per-iteration step is
     max(block, frame_delay) whether or not that iteration draws.
 
+    Every sound carries its own t_ms, the millisecond the original calls
+    sndPlaySound. A sync sound starts at the top of its iteration and blocks,
+    so its t_ms is earlier than the pose it belongs to. An async sound starts
+    at the top of its iteration too and nothing waits. A wait_previous sound
+    first spins until the earlier pause=2 sound ends, so its t_ms is that end
+    time when the earlier sound is still playing.
+
     Returns the drawn poses, the time the last pose is erased, how much time
-    the blocking sounds added, and pose 0's own sound (if it has one) as
-    pre_sounds.
+    the blocking sounds added, pose 0's own sound (if it has one) as
+    pre_sounds, and the millisecond the [XXXX_OFFSET] wav starts.
     """
     poses = []
     pre_sounds = []
@@ -130,6 +137,7 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
             elif pause == 2:
                 pending_end = clock + duration
             sound = {
+                "t_ms": sound_start,
                 "name": cue["resolved"],
                 "mode": SOUND_MODES.get(pause, "async"),
                 "duration_ms": duration,
@@ -142,14 +150,7 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
             record["sound"] = sound
             poses.append(record)
         elif sound:
-            pre_sounds.append(
-                {
-                    "t_ms": sound_start,
-                    "name": sound["name"],
-                    "mode": sound["mode"],
-                    "duration_ms": sound["duration_ms"],
-                }
-            )
+            pre_sounds.append(dict(sound))
 
         # Every iteration, drawn or not, spends max(block, frame_delay)
         # before the next one starts.
@@ -162,9 +163,12 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
         end_ms = max(loop_end, last_start + hold_ms)
     else:
         end_ms = hold_ms
+    # The [XXXX_OFFSET] wav plays after the hold and blocks, so it starts where
+    # the loop and the hold leave the clock.
+    final_start = end_ms
     if final_wav:
         end_ms += final_wav["duration_ms"]
-    return poses, end_ms, blocking_count, blocking_ms, pre_sounds
+    return poses, end_ms, blocking_count, blocking_ms, pre_sounds, final_start
 
 
 def extract(cd_dir, out_dir, sound_index, frame_delay_default):
@@ -301,7 +305,7 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
             )
         total_timeline += len(entries)
 
-        poses, end_ms, blocking_count, blocking_ms, pre_sounds = build_timing(
+        poses, end_ms, blocking_count, blocking_ms, pre_sounds, final_start = build_timing(
             entries, frame_delay_default, hold_ms, final_wav
         )
         total_poses += len(poses)
@@ -343,7 +347,11 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
             ],
             "end_ms": end_ms,
             "final_wav": (
-                {"name": final_wav["name"], "duration_ms": final_wav["duration_ms"]}
+                {
+                    "t_ms": final_start,
+                    "name": final_wav["name"],
+                    "duration_ms": final_wav["duration_ms"],
+                }
                 if final_wav
                 else None
             ),

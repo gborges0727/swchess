@@ -443,6 +443,41 @@ int main(int argc, char** argv) {
                   "flipping the cadence leaves the position the moves made");
         }
 
+        // The black knight takes the white knight on e5, which is the BNWN
+        // film. Pose 16 of that film carries GRUNT2.WAV with pause=1, a sound
+        // the original starts at 1920 ms and blocks on until 3132 ms. The
+        // manifest and the timeline have to agree about that 1920, or the
+        // player used to throw and the window had nowhere to catch it.
+        {
+            const std::string knightManifest =
+                assetsDir + "/captures/BNWN/interp60/manifest.json";
+            if (!std::filesystem::exists(knightManifest)) {
+                std::printf("skip  %s is not there, so the blocking cue checks do not run\n",
+                            knightManifest.c_str());
+            } else {
+                swchess::game::ScriptOptions knight;
+                knight.cdDir = cdDir;
+                knight.assetsDir = assetsDir;
+                knight.settings.cadence = swchess::anim::Cadence::Interpolated60;
+                knight.moves =
+                    swchess::game::splitScript("e2e4 e7e5 g1f3 b8c6 f3e5 c6e5");
+                knight.dumpAtMs = 20000;
+                knight.dumpPath = outDir + "/game_test_bnwn_interpolated.ppm";
+                const swchess::game::ScriptResult took = swchess::game::runScript(knight);
+                check(took.rejected.empty(), "the rules module took every move of the knight line");
+                check(took.dumped, "the knight line composited a picture at 20000 ms");
+                check(took.dumpState == swchess::game::AnimState::Capturing,
+                      "the knight line is playing its film at 20000 ms");
+                check(took.dumpCapture == "BNWN",
+                      "the film at 20000 ms is the black knight taking the white knight");
+                check(took.dumpCadence == swchess::anim::Cadence::Interpolated60,
+                      "BNWN draws its interpolated frames rather than falling back");
+                check(took.dumpHasFrame, "an interpolated frame stands at 20000 ms");
+                check(took.dumpFrameKind != "blank" && !took.dumpFrameKind.empty(),
+                      "that frame carries a picture");
+            }
+        }
+
         // A capture whose interp60 folder is not there plays the authored
         // poses, and asking for the enhanced cadence changes nothing.
         const std::string bareAssets = outDir + "/game_test_no_interp";

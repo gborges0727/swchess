@@ -38,9 +38,15 @@ CanvasRect rectFrom(const json& node) {
     return rect;
 }
 
-// Reads the name, mode and duration the tool copies out of the timeline.
+// Reads the name, mode, duration and start time the tool copies out of the
+// timeline. A sound carries its own t_ms, the millisecond the original starts
+// it, which a sync sound reaches before its pose appears. A manifest written
+// before that field existed leaves startMs at whatever the caller set.
 void fillSound(const json& node, InterpSound* sound) {
     sound->name = node.at("name").get<std::string>();
+    if (node.contains("t_ms") && !node.at("t_ms").is_null()) {
+        sound->startMs = node.at("t_ms").get<std::int64_t>();
+    }
     if (node.contains("mode") && !node.at("mode").is_null()) {
         sound->mode = node.at("mode").get<std::string>();
     }
@@ -134,6 +140,9 @@ std::optional<InterpSequence> loadInterp(const std::string& assetsDir,
         for (const json& node : manifest.at("sounds")) {
             InterpSound sound;
             sound.poseIndex = node.at("pose").get<std::size_t>();
+            // The event's own t_ms is the pose time in an older manifest and
+            // the sound's start time in a current one. The sound's own t_ms
+            // wins when the tool wrote one.
             sound.startMs = node.at("t_ms").get<std::int64_t>();
             fillSound(node.at("sound"), &sound);
             sequence.sounds.push_back(sound);

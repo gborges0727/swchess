@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -544,9 +545,19 @@ void GameSession::startCapture(std::int64_t nowMs) {
     // Both fighters leave the board for the film. The attacker is not on it
     // yet, and the defender hides where it stands.
     hidden_ = defenderSquare_;
-    capturePlayer_.start(timeline_.get(), interp_.has_value() ? &*interp_ : nullptr, nowMs);
-    capturePlayer_.setCadence(interp_.has_value() ? settings_.cadence
-                                                  : anim::Cadence::Original120ms);
+    try {
+        capturePlayer_.start(timeline_.get(), interp_.has_value() ? &*interp_ : nullptr, nowMs);
+    } catch (const std::exception& problem) {
+        // Whatever the interpolated sequence got wrong, the film still plays.
+        // The authored poses need nothing from disk beyond the ANX.
+        std::fprintf(stderr, "swchess: %s, playing the original cadence instead\n",
+                     problem.what());
+        interp_.reset();
+        capturePlayer_.start(timeline_.get(), nullptr, nowMs);
+    }
+    capturePlayer_.setCadence(capturePlayer_.interp() != nullptr
+                                  ? settings_.cadence
+                                  : anim::Cadence::Original120ms);
     captureDraw_ = anim::DrawState{};
     state_ = AnimState::Capturing;
 }

@@ -12,6 +12,16 @@ Run the whole capture, then verify it:
     python3 -m tools.interp --check assets/captures/BBWB/interp60
     python3 -m tools.interp.contact assets/captures/BBWB/interp60
 
+`--refresh-cues <out dir>` rewrites one finished manifest's `sounds`,
+`pre_sounds` and `final_wav` from the `resolved.json` it names, and updates the
+hash that says which file those came from. It touches no frame and runs no
+inference, so re-cueing all 72 captures after a change to the extractor takes
+seconds instead of a full regeneration:
+
+    for d in assets/captures/*/interp60; do
+        python3 -m tools.interp --refresh-cues "$d"
+    done
+
 `--dry-run` prints the frame plan and calls no inference. `--fps` changes the
 sample rate. `--keep-work` leaves the pictures handed to RIFE in `work/` under
 the output directory, which is where to look when a frame comes out wrong.
@@ -46,6 +56,15 @@ The RIFE binary and model default to `.cache/rife/bin/rife-ncnn-vulkan` and
    duration, the source poses and the time step. It copies `end_ms`, `cuts`,
    `final_wav`, `pre_sounds` and every pose sound event across untouched.
 
+A sound event in `sounds` names the pose that carries it and the millisecond the
+original starts it, which `resolved.json` puts in the sound's own `t_ms`. That is
+not always the pose's own time. A `sync` sound starts at the top of its iteration
+and blocks, so it starts before its pose appears: BNWN pose 16 shows at 3132 ms
+and starts `GRUNT2.WAV` at 1920. The C++ player refuses an interp60 sequence
+whose cue times disagree with the timeline it loaded from the CD, so an event
+timed by the pose instead of the sound stops that capture from using its
+interpolated frames.
+
 ## Cuts
 
 `cuts` lists the pose indexes a cut comes before. The sampler holds the
@@ -73,7 +92,7 @@ frame inside it costs about 2 milliseconds.
 
 | File | What it does |
 | --- | --- |
-| `__main__.py` | The command line, including `--check` |
+| `__main__.py` | The command line, including `--check` and `--refresh-cues` |
 | `pipeline.py` | Composes poses, drives RIFE, writes frames and the manifest |
 | `timeline.py` | Turns the resolved timeline into an exact sample plan |
 | `images.py` | Union canvas, alpha split, and the divide back to straight alpha |
@@ -99,5 +118,7 @@ which nothing else in the repo has, to read back what RIFE wrote.
   also a sample time, and BBWB shifts by 632 ms partway through, so 2 of its 79
   poses qualify.
 - Every empty frame sits before the first pose.
-- Every sound event and every `pre_sounds` entry survives from the input.
+- Every sound event, every `pre_sounds` entry and the `final_wav` survive from
+  the input, each at the time the input gives it. The sound times come from the
+  sound's own `t_ms` in `resolved.json`, not from the pose's.
 - Every frame carries the canvas size.

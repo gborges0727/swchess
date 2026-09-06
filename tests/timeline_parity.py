@@ -5,7 +5,8 @@ player in src/anim/capture.cpp implements. This script re-derives the
 timeline the C++ way, by running the viewer's --dump-timeline mode, and
 diffs it against every resolved.json under an assets directory. A mismatch
 here means the Python extractor and the C++ player disagree about when a
-pose appears or when a capture ends.
+pose appears, which sound it carries, when that sound starts, or when the
+capture ends.
 
 Usage:
     python3 timeline_parity.py <swchess-viewer path> <cd dir> <assets dir>
@@ -35,9 +36,15 @@ def parse_dump(text):
         if line.startswith("index"):
             continue
         fields = line.split()
-        # index t_ms x y w h sound mode
+        # index t_ms x y w h sound mode sound_t_ms
         index, t_ms, x, y = (int(fields[0]), int(fields[1]), int(fields[2]), int(fields[3]))
-        rows[index] = {"t_ms": t_ms, "x": x, "y": y}
+        # The viewer writes "-" in all three sound columns for a pose whose
+        # cue named nothing the sound library holds.
+        name = fields[6] if fields[6] != "-" else None
+        mode = fields[7] if fields[7] != "-" else None
+        sound_t_ms = int(fields[8]) if fields[8] != "-" else None
+        rows[index] = {"t_ms": t_ms, "x": x, "y": y, "sound_name": name,
+                       "sound_mode": mode, "sound_t_ms": sound_t_ms}
     if end_ms is None:
         raise ValueError("no '# ... end N' line in --dump-timeline output")
     return rows, end_ms
@@ -86,6 +93,20 @@ def main():
                     failures.append(
                         f"{name} pose {index}: {field} python={py_pose[field]} cpp={cpp_row[field]}"
                     )
+            # The sound a pose carries, and the millisecond the original
+            # starts it. A sync sound starts before its pose reaches the
+            # screen, so these two times differ on purpose.
+            sound = py_pose.get("sound")
+            py_sound = {
+                "sound_name": sound["name"] if sound else None,
+                "sound_mode": sound["mode"] if sound else None,
+                "sound_t_ms": sound.get("t_ms") if sound else None,
+            }
+            for field, want in py_sound.items():
+                if want != cpp_row[field]:
+                    failures.append(
+                        f"{name} pose {index}: {field} python={want} cpp={cpp_row[field]}"
+                    )
 
         if resolved["end_ms"] != cpp_end_ms:
             failures.append(f"{name}: end_ms python={resolved['end_ms']} cpp={cpp_end_ms}")
@@ -96,7 +117,8 @@ def main():
             print(f"  {line}")
         return 1
 
-    print(f"ok: {len(resolved_paths)} capture timelines match --dump-timeline exactly")
+    print(f"ok: {len(resolved_paths)} capture timelines, their poses and their sound cues "
+          "match --dump-timeline exactly")
     return 0
 
 
