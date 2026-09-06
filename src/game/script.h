@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -39,6 +40,10 @@ struct ScriptOptions {
     // interpolated frames finish loading. Waiting keeps one script drawing
     // the same pictures on every run.
     bool waitForInterp = true;
+    // Runs on the composited board picture just before the dump is written.
+    // The game screen uses it to put the picture into the 674 by 512 window
+    // canvas and draw the button row and the status bar over it.
+    std::function<void(GameSession&, Image&)> decorate;
 };
 
 struct ScriptResult {

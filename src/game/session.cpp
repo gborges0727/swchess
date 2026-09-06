@@ -22,9 +22,7 @@ constexpr int kIdBlackMated = 32777;
 constexpr int kIdWhiteMated = 32778;
 constexpr int kIdStalemate = 32779;
 
-// Where the status line starts, and where the promotion panel stands.
-constexpr int kStatusX = 10;
-constexpr int kStatusY = 456;
+// Where the promotion panel stands.
 constexpr int kPanelX = 8;
 constexpr int kPanelGap = 8;
 
@@ -150,7 +148,27 @@ GameSession::GameSession(std::string cdDir, std::string assetsDir, Settings sett
     resetDisplay();
 }
 
-void GameSession::rebuildScene() { scene_ = board::loadBoardScene(cdDir_, settings_.set); }
+void GameSession::rebuildScene() {
+    scene_ = board::loadBoardScene(cdDir_, settings_.set);
+    if (settings_.background >= 0) {
+        applyBackground();
+    }
+}
+
+void GameSession::applyBackground() {
+    scene_.settings.background = settings_.background;
+    scene_.backgroundSource = board::backgroundName(settings_.set, scene_.settings) + ".BMP";
+    scene_.background = loadBmp(cdDir_ + "/" + scene_.backgroundSource);
+}
+
+void GameSession::setBackground(int background) {
+    settings_.background = background;
+    if (background < 0) {
+        rebuildScene();
+        return;
+    }
+    applyBackground();
+}
 
 void GameSession::resetDisplay() {
     for (std::optional<chess::Piece>& slot : display_) {
@@ -263,6 +281,13 @@ void GameSession::newGame() {
     promotionTo_.reset();
     resetDisplay();
     state_ = AnimState::Idle;
+}
+
+void GameSession::setGame(const chess::Game& game) {
+    newGame();
+    game_ = game;
+    resetDisplay();
+    state_ = game_.result() == chess::GameResult::Ongoing ? AnimState::Idle : AnimState::GameOver;
 }
 
 bool GameSession::undo() {
@@ -699,23 +724,21 @@ void GameSession::drawPieces(Image& out) const {
     }
 }
 
-void GameSession::drawStatus(Image& out) const {
-    const std::string bytes = statusBytes();
-    if (bytes.empty()) {
-        return;
+std::string GameSession::stringBytes(int id) const {
+    auto found = strings_.find(static_cast<int>(settings_.language));
+    if (found != strings_.end() && found->second.has(id)) {
+        return std::string(found->second.get(id));
     }
-    const text::TextImage line = text::render(font_, bytes);
-    blitRGBA(out, line.rgba.data(), line.width, line.height, kStatusX, kStatusY);
+    return fallbackText(id);
+}
+
+const audio::Clip* GameSession::clip(const std::string& name) const {
+    auto found = clips_.find(name);
+    return found == clips_.end() ? nullptr : &found->second;
 }
 
 std::string GameSession::statusBytes() const {
-    auto found = strings_.find(static_cast<int>(settings_.language));
-    auto lookup = [&](int id) -> std::string {
-        if (found != strings_.end() && found->second.has(id)) {
-            return std::string(found->second.get(id));
-        }
-        return fallbackText(id);
-    };
+    auto lookup = [&](int id) { return stringBytes(id); };
 
     const chess::Position& position = game_.position();
     switch (game_.result()) {
@@ -772,7 +795,6 @@ void GameSession::render(Image& out) {
                      kPanelX + i * (cellW + kPanelGap), top);
         }
     }
-    drawStatus(out);
 }
 
 }  // namespace swchess::game

@@ -61,6 +61,9 @@ ScriptResult runScript(const ScriptOptions& options) {
             result.dumpFrameKind = anim::interpKindName(draw.frame->kind);
         }
         session.render(result.dump);
+        if (options.decorate) {
+            options.decorate(session, result.dump);
+        }
         if (!options.dumpPath.empty()) {
             writePPM(result.dump, options.dumpPath);
         }

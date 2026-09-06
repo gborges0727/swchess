@@ -7,7 +7,9 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,7 @@
 #include "assets/anx.h"
 #include "game/script.h"
 #include "game/session.h"
+#include "game/shell.h"
 
 namespace {
 
@@ -74,6 +77,39 @@ std::int64_t lastCaptureStart(const swchess::game::ScriptResult& result) {
         }
     }
     return at;
+}
+
+// Presses one button of the page the bar shows, the way a player does: the
+// mouse goes down on the button and comes back up on it.
+void pressButton(swchess::game::GameShell& shell, int slot) {
+    const swchess::ui::Rect rect = swchess::ui::buttonRect(slot);
+    shell.onMouseMove(rect.x + 5, rect.y + 5);
+    shell.onMouseDown(rect.x + 5, rect.y + 5, 0);
+    shell.onMouseUp(rect.x + 5, rect.y + 5, 0);
+}
+
+// Plays one move through a session and runs the animation out.
+void playThrough(swchess::game::GameSession& session, const char* text, std::int64_t& clock) {
+    std::optional<swchess::chess::Move> move = session.position().parseLongAlgebraic(text);
+    if (!move.has_value()) {
+        return;
+    }
+    session.clickSquare(move->from, clock);
+    session.clickSquare(move->to, clock);
+    for (int guard = 0; guard < 100000; ++guard) {
+        clock += 10;
+        session.advance(clock);
+        if (session.state() == swchess::game::AnimState::Idle) {
+            return;
+        }
+    }
+}
+
+std::string readWholeFile(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
 }
 
 // The cues one run started, as "NAME@1234" in the order they started.
@@ -429,6 +465,158 @@ int main(int argc, char** argv) {
               "a film with no interpolated frames falls back to the original cadence");
         check(noFramesDump.dumpHasRecord,
               "that film draws an authored pose");
+
+        // The whole program: the title screens, the menu buttons, the saved
+        // games and the settings file. Everything writes into its own
+        // directory, so nothing here touches the player's real settings.
+        const std::string shellDir = outDir + "/game_test_shell";
+        std::filesystem::remove_all(shellDir);
+        std::filesystem::create_directories(shellDir);
+
+        swchess::game::ShellOptions shellOptions;
+        shellOptions.cdDir = cdDir;
+        shellOptions.configDir = shellDir;
+        shellOptions.skipTitle = true;
+        swchess::game::GameShell shell(shellOptions);
+        check(shell.state() == swchess::game::ShellState::Playing,
+              "--skip-title opens the game screen");
+
+        const std::string startFen = shell.session().position().fen();
+        std::int64_t shellClock = 0;
+        playThrough(shell.session(), "e2e4", shellClock);
+        check(shell.session().position().fen() != startFen, "the shell played a move");
+
+        // NEW GAME sits in slot 1 of page 1, which the GAME MENU button of
+        // page 0 opens.
+        pressButton(shell, 0);
+        check(shell.bar().page() == 1, "the GAME MENU button shows page 1");
+        pressButton(shell, 1);
+        check(shell.session().position().fen() == startFen,
+              "the NEW GAME button puts the opening position back");
+        check(shell.session().state() == swchess::game::AnimState::Idle,
+              "the session is idle after NEW GAME");
+
+        // CAPTURES sits in slot 2 of page 7, which PLAY MENU then LOOK & FEEL
+        // opens. The status wording offers the other state.
+        shell.bar().setPage(0);
+        pressButton(shell, 1);
+        check(shell.bar().page() == 2, "the PLAY MENU button shows page 2");
+        pressButton(shell, 1);
+        check(shell.bar().page() == 7, "the LOOK & FEEL button shows page 7");
+        check(shell.settings().captures == 1, "the captures setting starts on");
+        check(shell.bar().statusIdFor(7, 2) == 72, "captures on shows string id 72");
+        const swchess::ui::Rect capturesButton = swchess::ui::buttonRect(2);
+        shell.onMouseMove(capturesButton.x + 5, capturesButton.y + 5);
+        const std::string capturesOn = shell.bar().statusText();
+        check(capturesOn == "CAPTURES OFF",
+              "the hovered button offers to switch the films off, not " + capturesOn);
+        pressButton(shell, 2);
+        check(shell.settings().captures == 0, "the CAPTURES button turns the setting off");
+        check(!shell.session().settings().captures, "the session stops playing the films");
+        check(shell.bar().statusIdFor(7, 2) == 78, "captures off shows string id 78");
+        check(shell.bar().statusText() == "CAPTURES ON",
+              "the status bar now offers to switch the films back on, not " +
+                  shell.bar().statusText());
+        std::printf("the captures button reads %s, then %s\n", capturesOn.c_str(),
+                    shell.bar().statusText().c_str());
+
+        // A native saved game keeps the moves, so a reloaded game stands
+        // exactly where it stood.
+        playThrough(shell.session(), "e2e4", shellClock);
+        playThrough(shell.session(), "e7e5", shellClock);
+        const std::string savedFen = shell.session().position().fen();
+        const std::string savePath = shellDir + "/saved.json";
+        check(shell.saveGameFile(savePath), "the shell wrote a native saved game");
+        shell.runCommand(swchess::ui::command::kNewGame, shellClock);
+        check(shell.session().position().fen() == startFen, "the board is new again");
+        check(shell.loadGameFile(savePath), "the shell read the native saved game back");
+        check(shell.session().position().fen() == savedFen,
+              "the loaded game stands where the saved one did");
+
+        // The original saved game on the CD opens through readCmg.
+        const std::string cmgPath = cdDir + "/STARWARS.CMG";
+        check(shell.loadGameFile(cmgPath), "the shell read STARWARS.CMG");
+        check(shell.session().position().fen() == startFen,
+              "STARWARS.CMG stands on the opening position");
+
+        // SAVE SETTINGS writes the seven keys the original writes.
+        const std::string iniPath = shellDir + "/SWC.INI";
+        check(!std::filesystem::exists(iniPath), "no settings file exists before SAVE SETTINGS");
+        shell.runCommand(swchess::ui::command::kSaveSettings, shellClock);
+        check(std::filesystem::exists(iniPath), "SAVE SETTINGS wrote " + iniPath);
+        const std::string ini = readWholeFile(iniPath);
+        check(ini.find("[look_feel]") == 0, "the file opens with [look_feel]");
+        check(ini.find("captures=0") != std::string::npos,
+              "the file carries the captures setting the button turned off");
+        check(ini.find("walking=1") != std::string::npos, "the file carries walking=1");
+        check(ini.find("play_level=464") != std::string::npos, "the file carries play_level=464");
+        check(ini.find("language=") < ini.find("turn="), "language comes before turn");
+        check(swchess::ui::loadSettings(iniPath) == shell.settings(),
+              "the file reads back as the settings the shell holds");
+
+        // The title sequence runs the four launch screens and then hands over
+        // to the game screen.
+        swchess::game::ShellOptions titled = shellOptions;
+        titled.skipTitle = false;
+        swchess::game::GameShell titleShell(titled);
+        titleShell.start(0);
+        check(titleShell.state() == swchess::game::ShellState::Title,
+              "the program starts on the title sequence");
+
+        std::vector<std::string> order;
+        auto note = [&]() {
+            const std::string now =
+                titleShell.title() != nullptr
+                    ? std::to_string(static_cast<int>(titleShell.title()->state()))
+                    : std::string(swchess::game::shellStateName(titleShell.state()));
+            if (order.empty() || order.back() != now) {
+                order.push_back(now);
+            }
+        };
+        note();
+        for (std::int64_t clock = 0; clock <= 80000; clock += 500) {
+            titleShell.advance(clock);
+            note();
+        }
+        const std::vector<std::string> wanted{"0", "1", "2", "3", "playing"};
+        check(order == wanted, "the title runs the logo, the legal notice, the crawl and the "
+                               "title, then the game screen");
+        check(titleShell.state() == swchess::game::ShellState::Playing,
+              "the title sequence ends on the game screen");
+
+        // The crawl starts the theme, and the mixer is what plays it.
+        swchess::game::GameShell musicShell(titled);
+        musicShell.start(0);
+        // The sequence takes one screen per call, so the clock steps the way
+        // the window's own loop steps it.
+        for (std::int64_t clock = 0; clock <= 6500; clock += 500) {
+            musicShell.advance(clock);
+        }
+        check(musicShell.title() != nullptr &&
+                  musicShell.title()->state() == swchess::ui::TitleState::Crawl,
+              "the crawl is the screen showing at 6500 ms");
+        check(musicShell.session().mixer().activeVoices(swchess::audio::Channel::Music) > 0,
+              "the opening crawl starts the theme through the mixer");
+
+        // The whole window picture is the size the original window had.
+        swchess::Image window;
+        titleShell.render(window);
+        check(window.width == 674 && window.height == 512,
+              "the shell draws a 674 by 512 window");
+
+        // QUIT OK does not close at once. It runs the credit roll first, and
+        // the program ends when that roll finishes.
+        titleShell.runCommand(swchess::ui::command::kQuitOk, 80000);
+        check(titleShell.state() == swchess::game::ShellState::Credits,
+              "QUIT OK starts the credit roll");
+        check(titleShell.title() != nullptr &&
+                  titleShell.title()->state() == swchess::ui::TitleState::Credits,
+              "the credit roll is the screen showing");
+        titleShell.advance(80000 + 140000 + 1000);
+        check(titleShell.finished(), "the program ends when the credit roll ends");
+        titleShell.render(window);
+        check(window.width == 674 && window.height == 512,
+              "the shell draws a 674 by 512 window");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL threw: %s\n", error.what());
         ++failures;

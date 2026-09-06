@@ -25,15 +25,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../board" board)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../audio" audio)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../text" text)
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ui" ui)
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../save" save)
 endif()
 
 add_library(swchess_game STATIC
   session.cpp
   script.cpp
+  shell.cpp
 )
 # Headers include as "game/session.h", so the include root is src.
 target_include_directories(swchess_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(swchess_game PUBLIC swchess_anim swchess_board swchess_audio swchess_text)
+target_link_libraries(swchess_game PUBLIC swchess_anim swchess_board swchess_audio swchess_text
+                      swchess_ui swchess_save)
 target_compile_options(swchess_game PRIVATE -Wall -Wextra)
 
 add_executable(game_test game_test.cpp)

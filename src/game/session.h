@@ -49,6 +49,10 @@ struct Settings {
     text::Language language = text::Language::English;
     bool walking = true;   // off slides the piece with no walk frames
     bool captures = true;  // off skips the capture film
+    // Which background bitmap stands behind the board. 0 draws THRON256.BMP
+    // and 1 draws SPACE256.BMP, the two the CHANGE BOARD button picks between.
+    // -1 keeps whatever CMWIN.DAT names.
+    int background = -1;
     // Which pictures a capture draws. The enhanced 60 frames per second
     // pictures are the default, and a capture with none on disk plays the
     // authored poses instead. Nothing writes this to a file, because the
@@ -97,7 +101,14 @@ public:
     // Takes back the last move. It does nothing while an animation runs.
     bool undo();
 
+    // Puts a whole game on the board, which is how a loaded file arrives. It
+    // stops any animation and shows the position the game stands at.
+    void setGame(const chess::Game& game);
+
     void setSet(board::SetId set);
+    // Picks the background bitmap. 0 draws THRON256.BMP and 1 draws
+    // SPACE256.BMP, and -1 goes back to the one CMWIN.DAT names.
+    void setBackground(int background);
     void setLanguage(text::Language language);
     void cycleLanguage();
     void setWalking(bool on) { settings_.walking = on; }
@@ -151,8 +162,16 @@ public:
     // Every cue that started, in the order they started.
     const std::vector<SoundPlay>& soundLog() const { return soundLog_; }
 
-    // The status line in the stored bytes of the current language.
+    // What the side to move, a check, a mate, a stalemate or a draw reads as,
+    // in the stored bytes of the current language. The button bar draws it.
     std::string statusBytes() const;
+
+    // One string of the active language, as stored bytes. An id the file
+    // leaves empty comes back empty.
+    std::string stringBytes(int id) const;
+
+    // One sound of SWCAUDIO.DLL, or null when the file holds no such name.
+    const audio::Clip* clip(const std::string& name) const;
 
     audio::Mixer& mixer() { return mixer_; }
 
@@ -169,6 +188,8 @@ private:
     };
 
     void rebuildScene();
+    // Swaps in the background bitmap settings_.background names.
+    void applyBackground();
     void resetDisplay();
     void clearSelection();
     bool beginMove(chess::Move move, std::int64_t nowMs);
@@ -190,7 +211,6 @@ private:
     void drawSquareOutline(Image& out, chess::Square square, std::uint8_t r, std::uint8_t g,
                            std::uint8_t b, std::uint8_t a) const;
     void drawPieces(Image& out) const;
-    void drawStatus(Image& out) const;
 
     std::string cdDir_;
     std::string assetsDir_;
