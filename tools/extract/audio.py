@@ -55,6 +55,12 @@ def describe_wave(data):
     return info
 
 
+def duration_ms(entry):
+    """Round one sound's playing time to whole milliseconds."""
+    seconds = entry.get("duration_seconds")
+    return None if seconds is None else int(round(seconds * 1000))
+
+
 def extract(cd_dir, out_dir):
     """Write every sound into out_dir and return the catalog entries."""
     os.makedirs(out_dir, exist_ok=True)
@@ -114,8 +120,12 @@ def extract(cd_dir, out_dir):
         entry.update(describe_wave(data))
         standalone.append(entry)
 
-    index = {name.upper() for name in written}
-    index.update(name.upper() for name in STANDALONE)
+    # A per-frame wav= is looked up as a WAVE resource and nowhere else. The
+    # final wav= in a capture's _OFFSET section goes through FUN_1008_1519,
+    # which tries a file on disk before the resource, so it sees both sets.
+    resource_index = {n.upper(): duration_ms(e) for n, e in written.items()}
+    file_index = {e["resource_name"].upper(): duration_ms(e) for e in standalone}
+    index = {"resources": resource_index, "files": file_index}
     return {
         "resource_records": records,
         "standalone_files": standalone,

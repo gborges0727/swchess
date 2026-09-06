@@ -2,8 +2,15 @@
 
 Every capture owns an ANX file such as BBWB.ANX and a section in a piece INI
 such as BB.INI. The ANX stores each distinct bitmap once, so a folder holds one
-RGBA PNG per distinct record. timeline.json then lists the frames in play order
-and points each one at its PNG, so a repeated pose keeps its own timeline entry.
+RGBA PNG per distinct record. timeline.json lists every timeline entry with the
+fields it came from, and resolved.json lists only the poses the original draws,
+each with the millisecond it appears at.
+
+docs/research/capture-player.md is the source for the rules here. The timeline
+index and the ANX record index are the same number. Each frame's position comes
+from table 2 of the ANX plus the capture's [XXXX_OFFSET] x and y. The player
+decodes pose 0 but never draws it, shows every later pose frame_delay apart, and
+holds the last pose before erasing it.
 """
 
 import glob
@@ -20,6 +27,19 @@ from ..reference import anx
 # frame 3 of the BF_C3 sequence. The stem is greedy so the number stays three
 # digits even when the stem itself ends in a digit.
 ART_PATTERN = re.compile(r"^(?P<stem>.+?)(?P<frame>\d{3})\.(?P<ext>\w+)$", re.I)
+
+# FUN_1058_0ce6 loads SPACE256.BMP or THRON256.BMP as the backdrop, and both are
+# 640 by 480. FUN_1058_0150 clips every frame to that rectangle.
+CANVAS = {"x": 0, "y": 0, "w": 640, "h": 480}
+
+# The defaults GetPrivateProfileInt passes at 1058:11bf, 1058:11d9 and
+# 1058:1221 when the [XXXX_OFFSET] section leaves a key out.
+DEFAULT_OFFSET_X = 215
+DEFAULT_OFFSET_Y = 100
+DEFAULT_HOLD_MS = 1000
+
+# pause= picks one of three sound behaviours at 1058:0a44 through 1058:0a9d.
+SOUND_MODES = {0: "async", 1: "sync", 2: "wait_previous"}
 
 
 def parse_art(value):
@@ -42,6 +62,80 @@ def ini_for(capture):
     return capture[:2].upper() + ".INI"
 
 
+def resolve_final_wav(raw, sound_index):
+    """Resolve the [XXXX_OFFSET] wav= that plays after the hold.
+
+    FUN_1008_1519 tries the name as a file on disk and then as a WAVE resource,
+    so this lookup sees the loose WAV files as well as SWCAUDIO.DLL.
+    """
+    if not raw:
+        return None
+    name = raw.strip().upper()
+    for source in ("files", "resources"):
+        if name in sound_index[source]:
+            return {
+                "name": name,
+                "raw": raw,
+                "source": source,
+                "duration_ms": sound_index[source][name] or 0,
+            }
+    return {"name": name, "raw": raw, "source": None, "duration_ms": 0,
+            "status": "silent_in_original"}
+
+
+def build_timing(entries, frame_delay, hold_ms, final_wav):
+    """Walk the timeline the way FUN_1058_0a0a does and time every pose.
+
+    Returns the drawn poses, the time the last pose is erased, and how much time
+    the blocking sounds added.
+    """
+    poses = []
+    clock = 0
+    pending_end = None
+    blocking_count = 0
+    blocking_ms = 0
+
+    for entry in entries:
+        start = clock
+        sound = None
+        cue = entry["sound"]
+        if cue and cue["status"] == "resolved":
+            duration = cue["duration_ms"] or 0
+            pause = entry["pause"] or 0
+            # A frame with a sound first waits out an earlier pause=2 sound.
+            if pending_end is not None:
+                if pending_end > clock:
+                    blocking_count += 1
+                    blocking_ms += pending_end - clock
+                    clock = pending_end
+                pending_end = None
+            if pause == 1:
+                # sndPlaySound with SND_SYNC blocks for the whole sound.
+                clock += duration
+                blocking_count += 1
+                blocking_ms += duration
+            elif pause == 2:
+                pending_end = clock + duration
+            sound = {
+                "name": cue["resolved"],
+                "mode": SOUND_MODES.get(pause, "async"),
+                "duration_ms": duration,
+            }
+
+        if entry["index"] != 0:
+            record = dict(entry["pose"])
+            record["index"] = entry["index"]
+            record["t_ms"] = clock
+            record["sound"] = sound
+            poses.append(record)
+            clock = max(clock, start + frame_delay)
+
+    end_ms = clock + hold_ms
+    if final_wav:
+        end_ms += final_wav["duration_ms"]
+    return poses, end_ms, blocking_count, blocking_ms
+
+
 def extract(cd_dir, out_dir, sound_index, frame_delay_default):
     """Write every capture folder under out_dir and return catalog data."""
     os.makedirs(out_dir, exist_ok=True)
@@ -49,9 +143,11 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
     captures = []
     record_entries = []
     unresolved = []
-    aliases = []
     total_records = 0
     total_timeline = 0
+    total_poses = 0
+    blocking_captures = 0
+    summary = []
 
     for path in sorted(glob.glob(os.path.join(cd_dir, "*.ANX"))):
         capture = os.path.splitext(os.path.basename(path))[0].upper()
@@ -63,6 +159,8 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
         with open(path, "rb") as fh:
             blob = fh.read()
         count, offsets, records = anx.parse(blob)
+        positions = anx.positions(blob)
+        lengths = anx.compressed_lengths(blob)
 
         folder = os.path.join(out_dir, capture)
         os.makedirs(folder, exist_ok=True)
@@ -100,64 +198,130 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
 
         section = ini.section(capture)
         keys = list(section.keys) if section else []
+        # FUN_1058_0e15 runs one iteration per key name and checks the counter
+        # against the ANX frame count, so the key list is the timeline. WNBR.ANX
+        # declares 80 records while [WNBR] lists 71 keys, and the last nine
+        # records never play.
+        if len(keys) > count:
+            raise ValueError(
+                f"{capture}: {len(keys)} INI keys but only {count} ANX records"
+            )
         offset_section = ini.section(capture + "_OFFSET")
+        offset_raw = offset_section.raw() if offset_section else {}
+        offset_x = as_int(offset_raw.get("x"), DEFAULT_OFFSET_X)
+        offset_y = as_int(offset_raw.get("y"), DEFAULT_OFFSET_Y)
+        hold_ms = as_int(offset_raw.get("hold"), DEFAULT_HOLD_MS)
+        final_wav = resolve_final_wav(offset_raw.get("wav"), sound_index)
         placement = {
-            "raw": offset_section.raw() if offset_section else {},
-            "x": as_int(offset_section.get("x"), 0) if offset_section else 0,
-            "y": as_int(offset_section.get("y"), 0) if offset_section else 0,
-            "hold": as_int(offset_section.get("hold")) if offset_section else None,
+            "raw": offset_raw,
+            "x": offset_x,
+            "y": offset_y,
+            "x_from_default": "x" not in {k.lower() for k in offset_raw},
+            "y_from_default": "y" not in {k.lower() for k in offset_raw},
+            "hold_ms": hold_ms,
+            "wav": final_wav,
         }
 
         entries = []
-        recovered_keys = 0
-        for index in range(count):
-            key = keys[index] if index < len(keys) else None
-            key_source = "listed"
-            if key is None:
-                # WN.INI lists only 71 keys under [WNBR] while WNBR.ANX holds 80
-                # frames and WN.INI still carries [WNBR_072] through [WNBR_080].
-                # Fall back to the naming the file already uses so no frame
-                # loses its INI fields.
-                guess = f"{capture}_{index + 1:03d}"
-                if ini.section(guess) is not None:
-                    key = guess
-                    key_source = "recovered from the frame section name"
-                    recovered_keys += 1
-                else:
-                    key_source = "missing"
-            frame = ini.section(key) if key else None
+        for index, key in enumerate(keys):
+            frame = ini.section(key)
             raw = frame.raw() if frame else {}
             wav_raw = frame.get("wav") if frame else None
             sound = None
             if wav_raw:
-                sound = cues.resolve(wav_raw, sound_index, capture, ini_name, key)
-                if sound["status"] == "missing":
+                sound = cues.resolve(
+                    wav_raw, sound_index["resources"], capture, ini_name, key
+                )
+                if sound["status"] == "silent_in_original":
                     unresolved.append(sound)
-                elif sound["status"] == "alias":
-                    aliases.append(sound)
             off = offsets[index]
             rec = records[off]
+            table_x, table_y = positions[index]
             entries.append(
                 {
                     "index": index,
                     "ini_key": key,
-                    "ini_key_source": key_source,
                     "frame_number": index + 1,
                     "record_offset": off,
                     "image": images[off],
                     "width": rec["width"],
                     "height": rec["height"],
-                    "x": as_int(raw.get("x"), 0),
-                    "y": as_int(raw.get("y"), 0),
+                    "compressed_length": lengths[index],
+                    "table_x": table_x,
+                    "table_y": table_y,
+                    "x": table_x + offset_x,
+                    "y": table_y + offset_y,
+                    "ini_x": as_int(raw.get("x")),
+                    "ini_y": as_int(raw.get("y")),
+                    # Only wav= and pause= reach the player, and pause= counts
+                    # for nothing without a wav= beside it.
                     "pause": as_int(raw.get("pause")),
-                    "hold": as_int(raw.get("hold")),
                     "art": parse_art(raw.get("art")),
                     "sound": sound,
                     "ini": raw,
+                    "pose": {
+                        "image": images[off],
+                        "x": table_x + offset_x,
+                        "y": table_y + offset_y,
+                        "w": rec["width"],
+                        "h": rec["height"],
+                    },
                 }
             )
         total_timeline += len(entries)
 
+        poses, end_ms, blocking_count, blocking_ms = build_timing(
+            entries, frame_delay_default, hold_ms, final_wav
+        )
+        total_poses += len(poses)
+        nominal = (
+            max(len(entries) - 1, 0) * frame_delay_default
+            + hold_ms
+            + (final_wav["duration_ms"] if final_wav else 0)
+        )
+        added = end_ms - nominal
+        if blocking_count:
+            blocking_captures += 1
+
+        last = -1
+        for pose in poses:
+            if pose["t_ms"] < last:
+                raise ValueError(f"{capture}: pose times run backwards at {pose['index']}")
+            last = pose["t_ms"]
+            if not os.path.exists(os.path.join(folder, pose["image"])):
+                raise ValueError(f"{capture}: missing image {pose['image']}")
+
+        resolved = {
+            "capture": capture,
+            "frame_delay_ms": frame_delay_default,
+            "hold_ms": hold_ms,
+            "canvas": dict(CANVAS),
+            "poses": [
+                {
+                    "index": p["index"],
+                    "t_ms": p["t_ms"],
+                    "image": p["image"],
+                    "x": p["x"],
+                    "y": p["y"],
+                    "w": p["w"],
+                    "h": p["h"],
+                    "sound": p["sound"],
+                }
+                for p in poses
+            ],
+            "end_ms": end_ms,
+            "final_wav": (
+                {"name": final_wav["name"], "duration_ms": final_wav["duration_ms"]}
+                if final_wav
+                else None
+            ),
+            "cuts": [],
+        }
+        with open(os.path.join(folder, "resolved.json"), "w") as fh:
+            json.dump(resolved, fh, indent=1)
+
+        for entry in entries:
+            entry.pop("pose", None)
         timeline = {
             "capture": capture,
             "anx_file": os.path.basename(path),
@@ -165,12 +329,19 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
             "ini_section": capture,
             "frame_count_in_anx": count,
             "ini_key_count": len(keys),
-            "keys_match_anx_count": len(keys) == count,
-            "keys_recovered_from_section_names": recovered_keys,
+            "timeline_length": len(entries),
+            "unused_anx_records": count - len(entries),
             "distinct_records": len(records),
-            "reused_references": count - len(records),
+            "reused_references": len(entries) - len(set(offsets[: len(entries)])),
             "frame_delay_ms": frame_delay_default,
             "capture_offset": placement,
+            "canvas": dict(CANVAS),
+            "poses_shown": len(poses),
+            "end_ms": end_ms,
+            "blocking_sound_count": blocking_count,
+            "blocking_stall_ms": blocking_ms,
+            "nominal_end_ms": nominal,
+            "blocking_added_ms": added,
             "entries": entries,
         }
         with open(os.path.join(folder, "timeline.json"), "w") as fh:
@@ -182,12 +353,32 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
                 "anx_file": os.path.basename(path),
                 "ini_file": ini_name,
                 "distinct_records": len(records),
-                "timeline_entries": count,
-                "reused_references": count - len(records),
-                "keys_match_anx_count": len(keys) == count,
-                "keys_recovered_from_section_names": recovered_keys,
-                "output": f"captures/{capture}/timeline.json",
+                "frame_count_in_anx": count,
+                "timeline_entries": len(entries),
+                "unused_anx_records": count - len(entries),
+                "poses_shown": len(poses),
+                "hold_ms": hold_ms,
+                "end_ms": end_ms,
+                "blocking_sound_count": blocking_count,
+                "blocking_stall_ms": blocking_ms,
+                "nominal_end_ms": nominal,
+                "blocking_added_ms": added,
+                "offset_x": offset_x,
+                "offset_y": offset_y,
+                "final_wav": final_wav,
+                "compressed_lengths": lengths[:count],
+                "output": f"captures/{capture}/resolved.json",
             }
+        )
+        summary.append(
+            f"  {capture} poses {len(poses):3d} end_ms {end_ms:6d} "
+            f"blocking sounds {blocking_count}"
+            + (
+                f" (stalled {blocking_ms} ms, end_ms {added} ms later than"
+                f" the {nominal} ms a run with no blocking sound takes)"
+                if blocking_count
+                else ""
+            )
         )
 
     return {
@@ -195,7 +386,9 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
         "records": record_entries,
         "distinct_record_count": total_records,
         "timeline_entry_count": total_timeline,
+        "pose_count": total_poses,
         "capture_count": len(captures),
-        "sound_aliases": aliases,
-        "unresolved_sounds": unresolved,
+        "captures_with_blocking_sounds": blocking_captures,
+        "silent_in_original_sounds": unresolved,
+        "summary_lines": summary,
     }

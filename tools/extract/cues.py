@@ -1,39 +1,32 @@
-"""Match a wav= line in a capture INI to a real sound file.
+"""Match a wav= line in a capture INI to a real sound name.
 
-The INI values are lower case and a few are mistyped. Matching ignores case.
-Two values need repair before they match a resource name, and one names a file
-that the disc does not contain.
+FUN_1058_0c4d in XCHESS.EXE uppercases the INI value with AnsiUpper and then
+calls FindResource on SWCAUDIO.DLL with that exact string. There is no path
+stripping, no extension repair, and no file fallback. A value that does not name
+a WAVE resource plays nothing, so this module resolves the same way and marks
+every miss silent_in_original.
 """
-
-import ntpath
-
-# The two mistyped cues the plan calls out, keyed by the raw INI value.
-KNOWN_ALIASES = {
-    "atftstep.awv": "ATFTSTEP.WAV",
-    "r2alarm\\.wav": "R2ALARM.WAV",
-}
 
 
 def normalize(raw):
-    """Strip any path, drop stray backslashes, and upper case the file name."""
-    text = raw.strip().replace("/", "\\")
-    text = ntpath.basename(text)
-    text = text.replace("\\", "")
-    return text.upper()
+    """Upper case the value the way AnsiUpper does, and nothing else."""
+    return raw.strip().upper()
 
 
 def resolve(raw, index, capture, ini_file, section):
-    """Resolve one wav= value against the set of known sound names.
+    """Resolve one wav= value against the WAVE resource names.
 
-    `index` holds every sound name in upper case. The return value always says
-    which of resolved, alias or missing applies, so nothing is dropped silently.
+    `index` maps each upper case sound name to its length in milliseconds. The
+    returned entry always says which of resolved or silent_in_original applies,
+    so nothing is dropped silently.
     """
     plain = normalize(raw)
     entry = {
         "raw": raw,
         "normalized": plain,
         "resolved": None,
-        "status": "missing",
+        "duration_ms": None,
+        "status": "silent_in_original",
         "capture": capture,
         "ini_file": ini_file,
         "section": section,
@@ -41,23 +34,12 @@ def resolve(raw, index, capture, ini_file, section):
 
     if plain in index:
         entry["resolved"] = plain
+        entry["duration_ms"] = index[plain]
         entry["status"] = "resolved"
         return entry
 
-    alias = KNOWN_ALIASES.get(raw.strip().lower())
-    if alias and alias in index:
-        entry["resolved"] = alias
-        entry["status"] = "alias"
-        entry["alias_reason"] = "listed in docs/plan.md section 2 as an explicit cue alias"
-        return entry
-
-    stem = plain.rsplit(".", 1)[0]
-    guess = stem + ".WAV"
-    if guess in index:
-        entry["resolved"] = guess
-        entry["status"] = "alias"
-        entry["alias_reason"] = "the extension differs from the resource name"
-        return entry
-
-    entry["missing_reason"] = "no WAVE resource and no standalone WAV carries this name"
+    entry["silent_reason"] = (
+        f"SWCAUDIO.DLL holds no WAVE resource named {plain}, so the original "
+        "plays nothing on this frame"
+    )
     return entry

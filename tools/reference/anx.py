@@ -1,9 +1,12 @@
 """Reference decoder for the Star Wars Chess ANX capture files.
 
-An ANX file starts with a frame count at offset 0, then 450 little-endian offset
-slots. Every offset is relative to 0x70c, where the first BITMAPINFOHEADER sits.
-Several timeline entries may point at the same offset, so the file stores each
-distinct bitmap once.
+An ANX file starts with a frame count at offset 0, then three tables of 150
+little-endian entries each. Table 1 at offset 0x004 holds each record's byte
+offset relative to 0x70c, where the first BITMAPINFOHEADER sits. Table 2 at
+offset 0x25c holds each record's position as two signed 16-bit values, x then y.
+Table 3 at offset 0x4b4 holds each record's compressed byte length, which only
+the packer needed. Several timeline entries may point at the same table 1
+offset, so the file stores each distinct bitmap once.
 
 Each record is a BITMAPINFOHEADER followed by a BGRX palette and escape-byte RLE
 pixel data. The high word of the biCompression dword picks the escape byte. A
@@ -19,8 +22,28 @@ import struct
 # Every ANX offset slot counts from this file offset.
 BASE = 0x70C
 
-# The offset table holds 450 slots whether or not the capture uses them all.
-OFFSET_SLOTS = 450
+# Each of the three tables holds 150 slots whether or not the capture uses them
+# all, so the three tables together fill the 1800 bytes in front of BASE.
+TABLE_SLOTS = 150
+OFFSET_TABLE = 0x004
+POSITION_TABLE = 0x25C
+LENGTH_TABLE = 0x4B4
+
+
+def positions(data, count=None):
+    """Read table 2 as a list of (x, y) pairs of signed 16-bit values."""
+    n = TABLE_SLOTS if count is None else count
+    return [
+        struct.unpack_from("<hh", data, POSITION_TABLE + 4 * i) for i in range(n)
+    ]
+
+
+def compressed_lengths(data, count=None):
+    """Read table 3, the compressed byte length the packer wrote per record."""
+    n = TABLE_SLOTS if count is None else count
+    return [
+        struct.unpack_from("<I", data, LENGTH_TABLE + 4 * i)[0] for i in range(n)
+    ]
 
 
 def decode_record(data, start, end):

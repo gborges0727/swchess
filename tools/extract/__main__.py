@@ -25,7 +25,8 @@ DEFAULT_CD = "original/win3x/cd"
 
 EXPECTED = {
     "capture_records": 4799,
-    "timeline_entries": 5423,
+    "timeline_entries": 5414,
+    "poses_shown": 5342,
     "captures": 72,
     "piece_bitmaps": 1344,
     "wave_records": 110,
@@ -34,32 +35,34 @@ EXPECTED = {
     "locale_files": 4,
 }
 
-# The three cue problems the plan names. The extractor records them whether or
-# not it also finds them on its own, so a reader of catalog.json sees all three.
+# The three cue problems the plan names. FUN_1058_0c4d uppercases the INI value
+# and looks it up as a WAVE resource with no repair of any kind, so all three
+# play nothing in the original. The extractor records them whether or not it
+# also finds them on its own, so a reader of catalog.json sees all three.
 KNOWN_CUE_NOTES = [
     {
-        "kind": "alias",
+        "kind": "silent_in_original",
         "ini_file": "WN.INI",
         "section": "WNBR_019",
         "raw": "atftstep.awv",
-        "resolved": "ATFTSTEP.WAV",
-        "note": "the INI writes the extension awv, the WAVE resource is ATFTSTEP.WAV",
+        "resolved": None,
+        "note": "ATFTSTEP.AWV is not a WAVE resource, and the player never tries ATFTSTEP.WAV",
     },
     {
-        "kind": "alias",
+        "kind": "silent_in_original",
         "ini_file": "WP.INI",
         "section": "WPBB_002",
         "raw": "r2alarm\\.wav",
-        "resolved": "R2ALARM.WAV",
-        "note": "the INI has a stray backslash before the extension",
+        "resolved": None,
+        "note": "R2ALARM\\.WAV keeps the stray backslash, and the player never tries R2ALARM.WAV",
     },
     {
-        "kind": "missing",
+        "kind": "silent_in_original",
         "ini_file": "BB.INI",
         "section": "BBWQ_007",
-        "raw": "leia2.wav",
+        "raw": "LEIA2.WAV",
         "resolved": None,
-        "note": "LEIA2.WAV is not on the disc, so leave this cue silent until code evidence names a replacement",
+        "note": "SWCAUDIO.DLL holds no LEIA2.WAV",
     },
 ]
 
@@ -125,6 +128,7 @@ def run_extract(cd_dir, out_dir):
     counts = {
         "capture_records": capture_data["distinct_record_count"],
         "timeline_entries": capture_data["timeline_entry_count"],
+        "poses_shown": capture_data["pose_count"],
         "captures": capture_data["capture_count"],
         "piece_bitmaps": piece_data["bitmap_count"],
         "wave_records": audio_data["resource_record_count"],
@@ -156,10 +160,8 @@ def run_extract(cd_dir, out_dir):
         index[key] = entry
         unresolved.append(entry)
 
-    for found in capture_data["unresolved_sounds"]:
-        record("missing", found, "missing_reason")
-    for found in capture_data["sound_aliases"]:
-        record("alias", found, "alias_reason")
+    for found in capture_data["silent_in_original_sounds"]:
+        record("silent_in_original", found, "silent_reason")
 
     catalog = {
         "extractor_version": VERSION,
@@ -173,6 +175,8 @@ def run_extract(cd_dir, out_dir):
         "counts_match_expected": {k: counts[k] == EXPECTED[k] for k in EXPECTED},
         "unresolved": unresolved,
         "sources": sources,
+        "canvas": captures.CANVAS,
+        "captures_with_blocking_sounds": capture_data["captures_with_blocking_sounds"],
         "captures": capture_data["captures"],
         "capture_records": capture_data["records"],
         "pieces": piece_data["pieces"],
@@ -187,6 +191,13 @@ def run_extract(cd_dir, out_dir):
     with open(os.path.join(out_dir, "catalog.json"), "w") as fh:
         json.dump(catalog, fh, indent=1)
 
+    print()
+    for line in capture_data["summary_lines"]:
+        print(line)
+    print(
+        f"  {capture_data['captures_with_blocking_sounds']} of "
+        f"{capture_data['capture_count']} captures have a blocking sound"
+    )
     print()
     print(f"extractor {VERSION} finished in {time.time() - started:.1f} seconds")
     for key in EXPECTED:
