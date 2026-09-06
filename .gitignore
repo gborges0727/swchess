@@ -4,3 +4,4 @@ original/
 /assets/
 .cache/
 *.ghidra/
+__pycache__/

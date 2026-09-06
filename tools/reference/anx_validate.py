@@ -1,60 +1,116 @@
-import struct,glob,os,zlib,collections,sys
-CD='/Users/segrob/git/swchess/original/win3x/cd'
-OUT='/private/tmp/claude-501/-Users-segrob-git-swchess/1acda6bc-a3ae-4c95-bdad-9a3280d9aaba/scratchpad/fable-review/frames'
-BASE=0x70c
-def png(path,w,h,rgb_rows):
-    raw=b''.join(b'\x00'+r for r in rgb_rows)
-    def ch(t,b): c=t+b; return struct.pack('>I',len(b))+c+struct.pack('>I',zlib.crc32(c))
-    open(path,'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw,6))+ch(b'IEND',b''))
-def decode_record(d,a,end):
-    sz,w,h,pl,bc=struct.unpack_from('<IiiHH',d,a)
-    comp,szimg,xp,yp,clru,clri=struct.unpack_from('<IIiiII',d,a+16)
-    esc=comp>>16; pal=d[a+40:a+40+clru*4]; i=a+40+clru*4
-    need=w*h; out=bytearray()
-    while len(out)<need and i<end:
-        b=d[i]; i+=1
-        if b==esc:
-            v=d[i]; c=d[i+1]; i+=2; out+=bytes([v])*c
-        else: out.append(b)
-    tail=d[i:end]
-    return dict(w=w,h=h,esc=esc,szimg=szimg,stride=(w+3)&~3,pal=pal,px=bytes(out),ok_len=len(out)==need,tail=tail,tail_zero=all(t==0 for t in tail),consumed=i-a)
-def load(p):
-    d=open(p,'rb').read(); n=struct.unpack_from('<I',d,0)[0]
-    offs=[struct.unpack_from('<I',d,4+4*i)[0] for i in range(n)]
-    uniq=sorted(set(offs)); starts=[BASE+o for o in uniq]+[len(d)]
-    recs={}
-    for k,o in enumerate(uniq): recs[o]=decode_record(d,BASE+o,starts[k+1])
-    return n,offs,recs
-def to_rgb_rows(r):
-    pal=r['pal']; px=r['px']; w=r['w']; h=r['h']
-    rows=[b''.join(bytes((pal[p*4+2],pal[p*4+1],pal[p*4])) for p in px[y*w:(y+1)*w]) for y in range(h)]
-    rows.reverse(); return rows
-def sheet(p,name,maxframes=None):
-    n,offs,recs=load(p)
-    idx=list(range(n)) if maxframes is None else list(range(0,n,max(1,n//maxframes)))[:maxframes]
-    cw=max(recs[o]['w'] for o in recs); chh=max(recs[o]['h'] for o in recs)
-    cols=10; rowsn=(len(idx)+cols-1)//cols
-    W=cols*cw; H=rowsn*chh
-    canvas=[bytearray(b'\x30\x30\x30'*W) for _ in range(H)]
-    for j,fi in enumerate(idx):
-        r=recs[offs[fi]]; rr=to_rgb_rows(r); cx=(j%cols)*cw; cy=(j//cols)*chh
-        for y,row in enumerate(rr):
-            canvas[cy+chh-r['h']+y][cx*3:(cx+r['w'])*3]=row
-    png(os.path.join(OUT,name),W,H,[bytes(c) for c in canvas])
-    print('sheet',name,W,'x',H,'frames',len(idx))
-if __name__=='__main__':
-    tot=0; badlen=0; badtail=0; longtail=0; escs=collections.Counter(); esc_in_px=0; reuse=0; tl=0
-    for p in sorted(glob.glob(CD+'/*.ANX')):
-        n,offs,recs=load(p); tl+=n; reuse+=n-len(recs)
-        for o,r in recs.items():
-            tot+=1; escs[r['esc']]+=1
-            if not r['ok_len']: badlen+=1; print('LEN',os.path.basename(p),hex(o),r['w'],r['h'],len(r['px']))
-            if not r['tail_zero']: badtail+=1; print('TAIL',os.path.basename(p),hex(o),r['tail'][:16].hex())
-            if len(r['tail'])>31: longtail+=1; print('LONGTAIL',os.path.basename(p),hex(o),len(r['tail']))
-            if r['esc'] in r['px']: esc_in_px+=1
-            if r['szimg']!=r['stride']*r['h']: print('SZIMG',os.path.basename(p),hex(o),r['szimg'],r['stride']*r['h'])
-    print('records',tot,'timeline',tl,'timeline entries reusing a record',reuse,'esc values',dict(escs))
-    print('wrong length',badlen,'nonzero tail',badtail,'tail>31',longtail,'escape index appears in pixels',esc_in_px)
-    sheet(CD+'/BBWB.ANX','bbwb_all.png')
-    sheet(CD+'/BKWB.ANX','bkwb_all.png')
-    sheet(CD+'/WBBR.ANX','wbbr_sample.png',30)
+"""Check every ANX file in a directory against the decoder in anx.py.
+
+Run it like this:
+
+    python3 tools/reference/anx_validate.py --cd original/win3x/cd
+
+Add --sheets DIR to write contact sheets for a few captures. Without that flag
+the script writes nothing.
+"""
+
+import argparse
+import collections
+import glob
+import os
+import struct
+import sys
+import zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from anx import decode_record, load, to_rgb  # noqa: E402
+
+
+def write_png_rgb(path, width, height, rows):
+    raw = b"".join(b"\x00" + r for r in rows)
+
+    def chunk(tag, body):
+        c = tag + body
+        return struct.pack(">I", len(body)) + c + struct.pack(">I", zlib.crc32(c))
+
+    with open(path, "wb") as fh:
+        fh.write(b"\x89PNG\r\n\x1a\n")
+        fh.write(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+        fh.write(chunk(b"IDAT", zlib.compress(raw, 6)))
+        fh.write(chunk(b"IEND", b""))
+
+
+def contact_sheet(anx_path, out_path, max_frames=None, columns=10):
+    count, offsets, records = load(anx_path)
+    picks = list(range(count))
+    if max_frames is not None and count > max_frames:
+        step = max(1, count // max_frames)
+        picks = list(range(0, count, step))[:max_frames]
+    cell_w = max(r["width"] for r in records.values())
+    cell_h = max(r["height"] for r in records.values())
+    rows_n = (len(picks) + columns - 1) // columns
+    width = columns * cell_w
+    height = rows_n * cell_h
+    canvas = [bytearray(b"\x30\x30\x30" * width) for _ in range(height)]
+    for j, frame in enumerate(picks):
+        rec = records[offsets[frame]]
+        pixels = to_rgb(rec)
+        cx = (j % columns) * cell_w
+        cy = (j // columns) * cell_h
+        for y, row in enumerate(pixels):
+            target = canvas[cy + cell_h - rec["height"] + y]
+            target[cx * 3 : (cx + rec["width"]) * 3] = row
+    write_png_rgb(out_path, width, height, [bytes(c) for c in canvas])
+    print("sheet", out_path, width, "x", height, "frames", len(picks))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--cd", required=True, help="directory holding the ANX files")
+    ap.add_argument("--sheets", help="directory to write contact sheets into")
+    args = ap.parse_args(argv)
+
+    total = 0
+    bad_length = 0
+    bad_tail = 0
+    long_tail = 0
+    escapes = collections.Counter()
+    escape_in_pixels = 0
+    reused = 0
+    timeline = 0
+
+    for path in sorted(glob.glob(os.path.join(args.cd, "*.ANX"))):
+        count, offsets, records = load(path)
+        timeline += count
+        reused += count - len(records)
+        for off, rec in records.items():
+            total += 1
+            escapes[rec["escape"]] += 1
+            if not rec["complete"]:
+                bad_length += 1
+                print("LEN", os.path.basename(path), hex(off), len(rec["pixels"]))
+            if not rec["tail_zero"]:
+                bad_tail += 1
+                print("TAIL", os.path.basename(path), hex(off), rec["tail"][:16].hex())
+            if len(rec["tail"]) > 31:
+                long_tail += 1
+                print("LONGTAIL", os.path.basename(path), hex(off), len(rec["tail"]))
+            if rec["escape"] in rec["pixels"]:
+                escape_in_pixels += 1
+            if rec["size_image"] != rec["stride"] * rec["height"]:
+                print("SIZEIMAGE", os.path.basename(path), hex(off), rec["size_image"])
+
+    print("records", total, "timeline", timeline, "reused references", reused)
+    print("escape values", dict(escapes))
+    print(
+        "wrong length", bad_length,
+        "nonzero tail", bad_tail,
+        "tail over 31 bytes", long_tail,
+        "escape index inside pixels", escape_in_pixels,
+    )
+
+    if args.sheets:
+        os.makedirs(args.sheets, exist_ok=True)
+        contact_sheet(os.path.join(args.cd, "BBWB.ANX"), os.path.join(args.sheets, "bbwb_all.png"))
+        contact_sheet(os.path.join(args.cd, "BKWB.ANX"), os.path.join(args.sheets, "bkwb_all.png"))
+        contact_sheet(os.path.join(args.cd, "WBBR.ANX"), os.path.join(args.sheets, "wbbr_sample.png"), 30)
+    return 0 if bad_length == 0 and bad_tail == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
