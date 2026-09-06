@@ -70,11 +70,20 @@ def run(out_dir, verbose=True):
     by_time = {}
     for i, frame in enumerate(frames):
         by_time.setdefault(Decimal(frame["t_ms"]), i)
-    copied = 0
+    # Two poses can share one t_ms (the capture recorded them at the same
+    # millisecond even though they are distinct images). Only one sample can
+    # ever sit at that instant, and the pipeline resolves the tie in favour
+    # of the later pose in authoring order, the one still current when the
+    # next transition begins. Check that same, later pose; the earlier one
+    # at a shared time has no sample of its own to be copied into.
+    poses_by_t = {}
     for pose in manifest["input"]["poses"]:
-        pose_t = Decimal(pose["t_ms"])
+        poses_by_t.setdefault(Decimal(pose["t_ms"]), []).append(pose)
+    copied = 0
+    for pose_t, group in poses_by_t.items():
         if pose_t not in by_time:
             continue
+        pose = group[-1]
         frame = frames[by_time[pose_t]]
         if frame["kind"] != "copy" or list(frame["source"]) != [pose["index"]]:
             problems.append("pose %d at %s ms is not copied, frame %s is %s"
