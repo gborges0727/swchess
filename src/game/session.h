@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdint>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "anim/capture.h"
+#include "anim/interp.h"
 #include "anim/player.h"
 #include "anim/walk.h"
 #include "assets/bmp.h"
@@ -47,6 +49,11 @@ struct Settings {
     text::Language language = text::Language::English;
     bool walking = true;   // off slides the piece with no walk frames
     bool captures = true;  // off skips the capture film
+    // Which pictures a capture draws. The enhanced 60 frames per second
+    // pictures are the default, and a capture with none on disk plays the
+    // authored poses instead. Nothing writes this to a file, because the
+    // session keeps every other setting in memory too.
+    anim::Cadence cadence = anim::Cadence::Interpolated60;
 };
 
 // The four pieces a promotion offers, in the order the panel shows them.
@@ -63,8 +70,10 @@ std::string captureCode(chess::Piece attacker, chess::Piece defender);
 class GameSession {
 public:
     // Reads the board, the sheet, the background, the font and the sounds out
-    // of `cdDir`. Throws std::runtime_error when a file is missing.
-    GameSession(std::string cdDir, Settings settings);
+    // of `cdDir`, and the interpolated capture frames out of `assetsDir`. An
+    // empty `assetsDir` turns the enhanced cadence off for every capture.
+    // Throws std::runtime_error when a CD file is missing.
+    GameSession(std::string cdDir, std::string assetsDir, Settings settings);
 
     // Moves the animation clock to `nowMs` and finishes whatever came due.
     void advance(std::int64_t nowMs);
@@ -94,6 +103,24 @@ public:
     void setWalking(bool on) { settings_.walking = on; }
     void setCaptures(bool on) { settings_.captures = on; }
 
+    // Picks the cadence. A capture already on the screen switches pictures
+    // where it stands, so the animation clock does not move and no cue plays
+    // twice. Asking for the enhanced cadence when this capture has no
+    // interpolated frames leaves the authored poses on the screen and keeps
+    // the preference for the next capture.
+    void setCadence(anim::Cadence cadence);
+    void toggleCadence();
+    // What the next capture will try to use.
+    anim::Cadence cadence() const { return settings_.cadence; }
+    // What the capture on the screen is drawing right now.
+    anim::Cadence activeCadence() const { return capturePlayer_.cadence(); }
+
+    // Waits for the interpolated frames instead of starting the capture
+    // without them. The window never does this, because a stall would show.
+    // The script runner does, because its clock is simulated and a load that
+    // finishes late would make the same script draw different pictures.
+    void setWaitForInterp(bool on) { waitForInterp_ = on; }
+
     // Draws the whole frame: the background, the highlights, the pieces, the
     // walker, the capture film and the status line.
     void render(Image& out);
@@ -113,8 +140,16 @@ public:
     // The film frame on the screen right now.
     const anim::DrawState& captureDraw() const { return captureDraw_; }
 
+    // One cue that started, with the animation time it started at.
+    struct SoundPlay {
+        std::string name;
+        std::int64_t timeMs = 0;
+    };
+
     // How often each WAVE resource started, keyed by resource name.
     const std::map<std::string, int>& soundPlays() const { return soundPlays_; }
+    // Every cue that started, in the order they started.
+    const std::vector<SoundPlay>& soundLog() const { return soundLog_; }
 
     // The status line in the stored bytes of the current language.
     std::string statusBytes() const;
@@ -141,6 +176,11 @@ private:
     void finishLeg();
     void startCapture(std::int64_t nowMs);
     void finishMove();
+    // Reads the interpolated frames of `captureName` on a worker thread while
+    // the piece walks.
+    void startInterpLoad(const std::string& captureName);
+    // Takes the loaded frames, or nothing when the worker is still reading.
+    void collectInterp();
 
     const anim::WalkSequence* walkFor(chess::Piece piece, chess::Square from, chess::Square to);
     const std::vector<std::uint8_t>& walkFrameRgba(const PieceBitmap* bitmap) const;
@@ -153,6 +193,7 @@ private:
     void drawStatus(Image& out) const;
 
     std::string cdDir_;
+    std::string assetsDir_;
     Settings settings_{};
     chess::Game game_{};
     board::BoardScene scene_{};
@@ -186,6 +227,12 @@ private:
     std::unique_ptr<anim::CaptureTimeline> timeline_;
     anim::CapturePlayer capturePlayer_;
     anim::DrawState captureDraw_{};
+    // The 60 frames per second pictures of the capture on the screen, and the
+    // worker reading the next ones.
+    std::optional<anim::InterpSequence> interp_;
+    std::future<std::optional<anim::InterpSequence>> interpLoad_;
+    bool interpLoading_ = false;
+    bool waitForInterp_ = false;
 
     audio::Mixer mixer_;
     std::map<std::string, audio::Clip> clips_;
@@ -193,6 +240,7 @@ private:
     std::vector<std::string> cueNames_;  // one per cue, in the scheduler's order
     std::size_t cuesReported_ = 0;
     std::map<std::string, int> soundPlays_;
+    std::vector<SoundPlay> soundLog_;
 
     text::BitmapFont font_{};
     std::map<int, text::StringTable> strings_;

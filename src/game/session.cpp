@@ -1,8 +1,10 @@
 #include "game/session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 #include "assets/anx.h"
 #include "assets/wav.h"
@@ -128,8 +130,8 @@ std::string captureCode(chess::Piece attacker, chess::Piece defender) {
     return code;
 }
 
-GameSession::GameSession(std::string cdDir, Settings settings)
-    : cdDir_(std::move(cdDir)), settings_(settings) {
+GameSession::GameSession(std::string cdDir, std::string assetsDir, Settings settings)
+    : cdDir_(std::move(cdDir)), assetsDir_(std::move(assetsDir)), settings_(settings) {
     rebuildScene();
     font_ = text::loadGuiFont(cdDir_);
     setLanguage(settings_.language);
@@ -186,10 +188,70 @@ void GameSession::cycleLanguage() {
     setLanguage(static_cast<text::Language>(next));
 }
 
+void GameSession::setCadence(anim::Cadence cadence) {
+    settings_.cadence = cadence;
+    if (state_ != AnimState::Capturing) {
+        return;
+    }
+    // The player refuses the enhanced cadence when this capture has no
+    // interpolated frames. The preference still changes, so the next capture
+    // that has them uses them.
+    if (cadence == anim::Cadence::Interpolated60 && capturePlayer_.interp() == nullptr) {
+        return;
+    }
+    capturePlayer_.setCadence(cadence);
+    // The next advance draws the other cadence's picture at the same
+    // animation time. Nothing else moves, and no cue fires again.
+}
+
+void GameSession::toggleCadence() {
+    setCadence(settings_.cadence == anim::Cadence::Interpolated60
+                   ? anim::Cadence::Original120ms
+                   : anim::Cadence::Interpolated60);
+}
+
+void GameSession::startInterpLoad(const std::string& captureName) {
+    interp_.reset();
+    interpLoading_ = false;
+    if (assetsDir_.empty()) {
+        return;
+    }
+    // The read decodes about 650 PNGs, which takes tens of milliseconds. It
+    // runs while the piece walks so the capture starts without a stall.
+    interpLoad_ = std::async(std::launch::async, [dir = assetsDir_, captureName]() {
+        return anim::loadInterp(dir, captureName);
+    });
+    interpLoading_ = true;
+}
+
+void GameSession::collectInterp() {
+    interp_.reset();
+    if (!interpLoading_) {
+        return;
+    }
+    if (!waitForInterp_ &&
+        interpLoad_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        // The walk ended first. The capture plays the authored poses rather
+        // than waiting, and the worker's result is dropped when it arrives.
+        interpLoading_ = false;
+        return;
+    }
+    interpLoading_ = false;
+    try {
+        interp_ = interpLoad_.get();
+    } catch (const std::exception&) {
+        // A manifest that is there but unreadable is not worth stopping the
+        // game for. The capture plays the authored poses.
+        interp_.reset();
+    }
+}
+
 void GameSession::newGame() {
     mixer_.stopAll();
     capturePlayer_.start(nullptr, 0);
     timeline_.reset();
+    interp_.reset();
+    interpLoading_ = false;
     captureName_.clear();
     captureDraw_ = anim::DrawState{};
     legs_.clear();
@@ -361,6 +423,9 @@ bool GameSession::beginMove(chess::Move move, std::int64_t nowMs) {
             moveCaptures_ = true;
         }
     }
+    if (moveCaptures_ && settings_.captures) {
+        startInterpLoad(captureCode(attacker_, defender_));
+    }
 
     for (std::optional<chess::Piece>& slot : display_) {
         slot.reset();
@@ -449,10 +514,14 @@ void GameSession::startCapture(std::int64_t nowMs) {
     scheduler_.setCues(std::move(cues));
     cuesReported_ = 0;
 
+    collectInterp();
+
     // Both fighters leave the board for the film. The attacker is not on it
     // yet, and the defender hides where it stands.
     hidden_ = defenderSquare_;
-    capturePlayer_.start(timeline_.get(), nowMs);
+    capturePlayer_.start(timeline_.get(), interp_.has_value() ? &*interp_ : nullptr, nowMs);
+    capturePlayer_.setCadence(interp_.has_value() ? settings_.cadence
+                                                  : anim::Cadence::Original120ms);
     captureDraw_ = anim::DrawState{};
     state_ = AnimState::Capturing;
 }
@@ -461,6 +530,8 @@ void GameSession::finishMove() {
     mixer_.stopAll();
     capturePlayer_.start(nullptr, 0);
     timeline_.reset();
+    interp_.reset();
+    interpLoading_ = false;
     captureName_.clear();
     captureDraw_ = anim::DrawState{};
     legs_.clear();
@@ -520,6 +591,7 @@ void GameSession::advance(std::int64_t nowMs) {
             const std::size_t cue = fired[cuesReported_];
             if (cue < cueNames_.size()) {
                 ++soundPlays_[cueNames_[cue]];
+                soundLog_.push_back(SoundPlay{cueNames_[cue], nowMs_});
             }
             ++cuesReported_;
         }
@@ -672,11 +744,18 @@ void GameSession::render(Image& out) {
     out = scene_.background;
     drawHighlights(out);
     drawPieces(out);
-    if (state_ == AnimState::Capturing && captureDraw_.visible &&
-        captureDraw_.record != nullptr) {
-        const std::vector<std::uint8_t> rgba = anxToRGBA(*captureDraw_.record);
-        blitRGBA(out, rgba.data(), captureDraw_.width, captureDraw_.height, captureDraw_.x,
-                 captureDraw_.y);
+    if (state_ == AnimState::Capturing && captureDraw_.visible) {
+        if (captureDraw_.frame != nullptr) {
+            // An interpolated picture is already RGBA, and it sits at the one
+            // rectangle every frame of the sequence shares.
+            const anim::PngImage& image = captureDraw_.frame->image;
+            blitRGBA(out, image.pixels.data(), image.width, image.height, captureDraw_.x,
+                     captureDraw_.y);
+        } else if (captureDraw_.record != nullptr) {
+            const std::vector<std::uint8_t> rgba = anxToRGBA(*captureDraw_.record);
+            blitRGBA(out, rgba.data(), captureDraw_.width, captureDraw_.height, captureDraw_.x,
+                     captureDraw_.y);
+        }
     }
     if (state_ == AnimState::Promoting) {
         const int cellW = scene_.sheet.cellWidth;

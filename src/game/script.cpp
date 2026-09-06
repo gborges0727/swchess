@@ -27,7 +27,8 @@ std::vector<std::string> splitScript(const std::string& text) {
 
 ScriptResult runScript(const ScriptOptions& options) {
     ScriptResult result;
-    GameSession session(options.cdDir, options.settings);
+    GameSession session(options.cdDir, options.assetsDir, options.settings);
+    session.setWaitForInterp(options.waitForInterp);
 
     std::size_t next = 0;         // the script move waiting to be played
     std::string playing;          // the move on the board right now
@@ -42,14 +43,22 @@ ScriptResult runScript(const ScriptOptions& options) {
         result.dumpState = session.state();
         result.dumpCapture = session.captureName();
         const anim::DrawState& draw = session.captureDraw();
-        result.dumpHasPose = draw.visible && draw.record != nullptr;
+        result.dumpCadence = session.activeCadence();
+        result.dumpHasRecord = draw.visible && draw.record != nullptr;
+        result.dumpHasFrame = draw.visible && draw.frame != nullptr;
+        result.dumpHasPose = result.dumpHasRecord || result.dumpHasFrame;
         if (result.dumpHasPose) {
             result.dumpPoseIndex = draw.poseIndex;
-            result.dumpRecordOffset = draw.record->offset;
             result.dumpX = draw.x;
             result.dumpY = draw.y;
             result.dumpWidth = draw.width;
             result.dumpHeight = draw.height;
+        }
+        if (result.dumpHasRecord) {
+            result.dumpRecordOffset = draw.record->offset;
+        }
+        if (result.dumpHasFrame) {
+            result.dumpFrameKind = anim::interpKindName(draw.frame->kind);
         }
         session.render(result.dump);
         if (!options.dumpPath.empty()) {
@@ -123,6 +132,7 @@ ScriptResult runScript(const ScriptOptions& options) {
     result.endedMs = now;
     result.finalFen = session.position().fen();
     result.soundPlays = session.soundPlays();
+    result.soundLog = session.soundLog();
     return result;
 }
 

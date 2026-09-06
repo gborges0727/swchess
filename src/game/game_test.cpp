@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <vector>
@@ -64,15 +65,37 @@ std::size_t captureCount(const swchess::game::ScriptResult& result) {
     return count;
 }
 
+// The animation time the last capture of the run started at.
+std::int64_t lastCaptureStart(const swchess::game::ScriptResult& result) {
+    std::int64_t at = -1;
+    for (const swchess::game::StateSample& sample : result.states) {
+        if (sample.state == swchess::game::AnimState::Capturing) {
+            at = sample.timeMs;
+        }
+    }
+    return at;
+}
+
+// The cues one run started, as "NAME@1234" in the order they started.
+std::vector<std::string> cueTrail(const swchess::game::ScriptResult& result) {
+    std::vector<std::string> trail;
+    for (const swchess::game::GameSession::SoundPlay& play : result.soundLog) {
+        trail.push_back(play.name + "@" + std::to_string(play.timeMs));
+    }
+    return trail;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: game_test <cd directory> [output directory]\n");
+        std::fprintf(stderr,
+                     "usage: game_test <cd directory> [output directory] [assets directory]\n");
         return 2;
     }
     const std::string cdDir = argv[1];
     const std::string outDir = argc > 2 ? argv[2] : std::string(".");
+    const std::string assetsDir = argc > 3 ? argv[3] : std::string("assets");
 
     try {
         // Scholar's mate. White's queen takes the f7 pawn and mates, so the
@@ -193,7 +216,7 @@ int main(int argc, char** argv) {
         check(slid.finalFen == took.finalFen, "sliding reaches the same position as walking");
 
         // Undo during Idle puts the position back.
-        swchess::game::GameSession session(cdDir, swchess::game::Settings{});
+        swchess::game::GameSession session(cdDir, std::string(), swchess::game::Settings{});
         std::int64_t now = 0;
         auto playMove = [&](const char* text) {
             std::optional<swchess::chess::Move> move =
@@ -256,7 +279,7 @@ int main(int argc, char** argv) {
 
         // Any click ends a film early, and the move it belonged to still
         // stands on the board.
-        swchess::game::GameSession skipper(cdDir, swchess::game::Settings{});
+        swchess::game::GameSession skipper(cdDir, std::string(), swchess::game::Settings{});
         std::int64_t clock = 0;
         for (const char* text : {"e2e4", "d7d5", "e4d5"}) {
             std::optional<swchess::chess::Move> move =
@@ -297,6 +320,115 @@ int main(int argc, char** argv) {
         }
         check(skipper.settings().language == swchess::text::Language::English,
               "four steps of the language key come back to English");
+
+        // The enhanced cadence. Black's light-square bishop reaches b7 and
+        // takes the white bishop that steps to a6, which is the BBWB film.
+        const std::string bishopScript = "e2e4 b7b6 f1b5 c8b7 b5a6 b7a6";
+        const std::string manifest = assetsDir + "/captures/BBWB/interp60/manifest.json";
+        if (!std::filesystem::exists(manifest)) {
+            std::printf("skip  %s is not there, so the enhanced cadence checks do not run\n",
+                        manifest.c_str());
+        } else {
+            swchess::game::ScriptOptions bishop;
+            bishop.cdDir = cdDir;
+            bishop.assetsDir = assetsDir;
+            bishop.moves = swchess::game::splitScript(bishopScript);
+            bishop.settings.cadence = swchess::anim::Cadence::Original120ms;
+            const swchess::game::ScriptResult timed = swchess::game::runScript(bishop);
+            check(timed.rejected.empty(), "the rules module took every move of the bishop line");
+            check(lastCaptureStart(timed) >= 0, "the bishop line reaches a film");
+
+            // Three seconds into the film, well inside BBWB's 10872 ms.
+            const std::int64_t dumpAt = lastCaptureStart(timed) + 3000;
+
+            bishop.dumpAtMs = dumpAt;
+            bishop.dumpPath = outDir + "/game_test_bbwb_original.ppm";
+            const swchess::game::ScriptResult original = swchess::game::runScript(bishop);
+
+            bishop.settings.cadence = swchess::anim::Cadence::Interpolated60;
+            bishop.dumpPath = outDir + "/game_test_bbwb_interpolated.ppm";
+            const swchess::game::ScriptResult enhanced = swchess::game::runScript(bishop);
+
+            check(original.dumpCapture == "BBWB" && enhanced.dumpCapture == "BBWB",
+                  "both runs play the black bishop taking the white bishop");
+            check(original.dumpCadence == swchess::anim::Cadence::Original120ms,
+                  "the original run draws the authored poses");
+            check(enhanced.dumpCadence == swchess::anim::Cadence::Interpolated60,
+                  "the enhanced run draws the interpolated frames");
+            check(original.dumpHasRecord, "the original run has an authored pose at the dump");
+            check(enhanced.dumpHasFrame, "the enhanced run has an interpolated frame at the dump");
+            check(enhanced.dumpFrameKind != "blank" && !enhanced.dumpFrameKind.empty(),
+                  "the interpolated frame at the dump carries a picture");
+            std::printf("the enhanced dump shows a %s frame\n", enhanced.dumpFrameKind.c_str());
+
+            check(cueTrail(original) == cueTrail(enhanced),
+                  "both cadences start the same cues at the same times");
+            check(!cueTrail(original).empty(), "the bishop film starts at least one cue");
+            check(original.endedMs == enhanced.endedMs,
+                  "both cadences end the run at the same animation time");
+            check(original.finalFen == enhanced.finalFen,
+                  "both cadences leave the same position");
+
+            // Toggling the cadence while the film runs neither rewinds the
+            // clock nor starts a cue twice.
+            swchess::game::Settings toggling;
+            toggling.cadence = swchess::anim::Cadence::Interpolated60;
+            swchess::game::GameSession mixed(cdDir, assetsDir, toggling);
+            mixed.setWaitForInterp(true);
+            std::int64_t tick = 0;
+            int flips = 0;
+            for (const std::string& text :
+                 swchess::game::splitScript(bishopScript)) {
+                std::optional<swchess::chess::Move> move =
+                    mixed.position().parseLongAlgebraic(text);
+                check(move.has_value(), std::string("the position allows ") + text);
+                if (!move.has_value()) {
+                    break;
+                }
+                mixed.clickSquare(move->from, tick);
+                mixed.clickSquare(move->to, tick);
+                for (int guard = 0; guard < 100000; ++guard) {
+                    tick += 10;
+                    mixed.advance(tick);
+                    if (mixed.state() == swchess::game::AnimState::Capturing &&
+                        (guard % 37) == 0) {
+                        mixed.toggleCadence();
+                        ++flips;
+                    }
+                    if (mixed.state() == swchess::game::AnimState::Idle) {
+                        break;
+                    }
+                }
+            }
+            check(flips > 2, "the run flipped the cadence more than twice inside the film");
+            check(mixed.soundPlays() == enhanced.soundPlays,
+                  "flipping the cadence mid film starts no cue a second time");
+            check(mixed.position().fen() == enhanced.finalFen,
+                  "flipping the cadence leaves the position the moves made");
+        }
+
+        // A capture whose interp60 folder is not there plays the authored
+        // poses, and asking for the enhanced cadence changes nothing.
+        const std::string bareAssets = outDir + "/game_test_no_interp";
+        std::filesystem::create_directories(bareAssets + "/captures/BBWB");
+        swchess::game::ScriptOptions bare;
+        bare.cdDir = cdDir;
+        bare.assetsDir = bareAssets;
+        bare.settings.cadence = swchess::anim::Cadence::Interpolated60;
+        bare.moves = swchess::game::splitScript(bishopScript);
+        const swchess::game::ScriptResult noFrames = swchess::game::runScript(bare);
+        check(noFrames.rejected.empty(),
+              "the bishop line runs with no interpolated frames on disk");
+        check(captureCount(noFrames) == 1, "the film still plays without interpolated frames");
+        check(noFrames.states.back().state == swchess::game::AnimState::Idle,
+              "the session waits for the next click when that film ends");
+        bare.dumpAtMs = lastCaptureStart(noFrames) + 3000;
+        bare.dumpPath = outDir + "/game_test_no_interp.ppm";
+        const swchess::game::ScriptResult noFramesDump = swchess::game::runScript(bare);
+        check(noFramesDump.dumpCadence == swchess::anim::Cadence::Original120ms,
+              "a film with no interpolated frames falls back to the original cadence");
+        check(noFramesDump.dumpHasRecord,
+              "that film draws an authored pose");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL threw: %s\n", error.what());
         ++failures;

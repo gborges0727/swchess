@@ -40,7 +40,18 @@ add_executable(game_test game_test.cpp)
 target_link_libraries(game_test PRIVATE swchess_game)
 target_compile_options(game_test PRIVATE -Wall -Wextra)
 
-add_test(NAME game_test COMMAND game_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}")
+# Where tools/interp writes its 60 frames per second capture frames. The test
+# skips its enhanced cadence checks when BBWB has no manifest there yet.
+if(NOT SWCHESS_ASSETS_DIR)
+  if(DEFINED SWCHESS_GAME_REPO_ROOT)
+    set(SWCHESS_ASSETS_DIR "${SWCHESS_GAME_REPO_ROOT}/assets")
+  else()
+    set(SWCHESS_ASSETS_DIR "${CMAKE_SOURCE_DIR}/assets")
+  endif()
+endif()
+
+add_test(NAME game_test COMMAND game_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}"
+         "${SWCHESS_ASSETS_DIR}")
 # Nothing here needs a sound card. The mixer falls back to SDL's dummy driver
 # on its own, and asking for it outright keeps a build machine quiet.
 set_tests_properties(game_test PROPERTIES

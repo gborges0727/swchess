@@ -1,9 +1,15 @@
 // swchess is the playable game. Two people move the pieces on the animated
 // board, the pieces walk between squares, and a capture plays its film.
 //
-//   swchess --cd original/win3x/cd
+//   swchess --cd original/win3x/cd --assets assets
 //   swchess --cd original/win3x/cd --set WHTTOP --language german
-//   swchess --cd original/win3x/cd --script "e2e4 d7d5 e4d5" --dump-at 3000 out.ppm
+//   swchess --cd original/win3x/cd --assets assets --cadence original \
+//           --script "e2e4 d7d5 e4d5" --dump-at 3000 out.ppm
+//
+// --assets names the directory tools/interp writes its 60 frames per second
+// capture frames into. A capture that has them plays them, and one that does
+// not plays the authored poses at their original 120 ms cadence. --cadence
+// picks which of the two the game asks for.
 //
 // The --script form never opens a window, so it runs on a machine with no
 // display. It plays the moves through the same state machine the window
@@ -11,8 +17,9 @@
 // time.
 //
 // Keys: 1 to 4 pick the set, L cycles the language, W turns walking on and
-// off, C turns the capture films on and off, U takes a move back, N starts a
-// new game, and Esc quits. Any key or click skips a capture.
+// off, C turns the capture films on and off, I switches between the
+// interpolated and the original capture cadence, U takes a move back, N starts
+// a new game, and Esc quits. Any key or click skips a capture.
 
 #include <SDL3/SDL.h>
 
@@ -32,6 +39,7 @@ constexpr int kLogicalHeight = swchess::anim::kCanvasHeight;
 
 struct Options {
     std::string cdDir;
+    std::string assetsDir;
     swchess::game::Settings settings{};
     std::string script;
     std::int64_t dumpAtMs = -1;
@@ -40,12 +48,14 @@ struct Options {
 
 void printUsage() {
     std::fprintf(stderr,
-                 "usage: swchess --cd <dir> [--set <SET>] [--language <NAME>]\n"
+                 "usage: swchess --cd <dir> [--assets <dir>] [--set <SET>]\n"
+                 "                [--language <NAME>] [--cadence <NAME>]\n"
                  "                [--no-walking] [--no-captures]\n"
                  "       swchess --cd <dir> --script \"e2e4 e7e5\" "
                  "--dump-at <MS> <out.ppm>\n"
                  "       a set is WHTBTM, WHTTOP, FACING or 2D\n"
-                 "       a language is english, french, german or spanish\n");
+                 "       a language is english, french, german or spanish\n"
+                 "       a cadence is original or interpolated\n");
 }
 
 bool parseLanguage(const std::string& name, swchess::text::Language* language) {
@@ -53,6 +63,13 @@ bool parseLanguage(const std::string& name, swchess::text::Language* language) {
     else if (name == "french") *language = swchess::text::Language::French;
     else if (name == "german") *language = swchess::text::Language::German;
     else if (name == "spanish") *language = swchess::text::Language::Spanish;
+    else return false;
+    return true;
+}
+
+bool parseCadence(const std::string& name, swchess::anim::Cadence* cadence) {
+    if (name == "original") *cadence = swchess::anim::Cadence::Original120ms;
+    else if (name == "interpolated") *cadence = swchess::anim::Cadence::Interpolated60;
     else return false;
     return true;
 }
@@ -71,6 +88,17 @@ bool parseOptions(int argc, char** argv, Options& options) {
             const char* value = next("--cd");
             if (value == nullptr) return false;
             options.cdDir = value;
+        } else if (arg == "--assets") {
+            const char* value = next("--assets");
+            if (value == nullptr) return false;
+            options.assetsDir = value;
+        } else if (arg == "--cadence") {
+            const char* value = next("--cadence");
+            if (value == nullptr) return false;
+            if (!parseCadence(value, &options.settings.cadence)) {
+                std::fprintf(stderr, "unknown cadence %s\n", value);
+                return false;
+            }
         } else if (arg == "--set") {
             const char* value = next("--set");
             if (value == nullptr) return false;
@@ -121,6 +149,7 @@ bool parseOptions(int argc, char** argv, Options& options) {
 int runScript(const Options& options) {
     swchess::game::ScriptOptions script;
     script.cdDir = options.cdDir;
+    script.assetsDir = options.assetsDir;
     script.settings = options.settings;
     script.moves = swchess::game::splitScript(options.script);
     script.dumpAtMs = options.dumpAtMs;
@@ -143,9 +172,13 @@ int runScript(const Options& options) {
                     static_cast<long long>(options.dumpAtMs),
                     swchess::game::animStateName(result.dumpState));
         if (result.dumpHasPose) {
-            std::printf(", capture %s pose %zu, %dx%d at %d,%d", result.dumpCapture.c_str(),
-                        result.dumpPoseIndex, result.dumpWidth, result.dumpHeight, result.dumpX,
-                        result.dumpY);
+            std::printf(", capture %s cadence %s pose %zu, %dx%d at %d,%d",
+                        result.dumpCapture.c_str(),
+                        swchess::anim::cadenceName(result.dumpCadence), result.dumpPoseIndex,
+                        result.dumpWidth, result.dumpHeight, result.dumpX, result.dumpY);
+            if (result.dumpHasFrame) {
+                std::printf(", interpolated frame %s", result.dumpFrameKind.c_str());
+            }
         }
         std::printf("\n");
     }
@@ -162,7 +195,7 @@ SDL_Texture* makeTexture(SDL_Renderer* renderer, int width, int height) {
 }
 
 int runWindow(const Options& options) {
-    swchess::game::GameSession session(options.cdDir, options.settings);
+    swchess::game::GameSession session(options.cdDir, options.assetsDir, options.settings);
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -229,6 +262,8 @@ int runWindow(const Options& options) {
                     session.setWalking(!session.settings().walking);
                 } else if (key == SDLK_C) {
                     session.setCaptures(!session.settings().captures);
+                } else if (key == SDLK_I) {
+                    session.toggleCadence();
                 } else if (key == SDLK_U) {
                     session.undo();
                 } else if (key == SDLK_N) {
@@ -251,12 +286,13 @@ int runWindow(const Options& options) {
 
         char title[256];
         std::snprintf(title, sizeof(title),
-                      "swchess  %s  %s  %s  walk %s  captures %s  audio %s",
+                      "swchess  %s  %s  %s  walk %s  captures %s  cadence %s  audio %s",
                       swchess::board::setKey(session.settings().set),
                       swchess::text::languageName(session.settings().language),
                       swchess::game::animStateName(session.state()),
                       session.settings().walking ? "on" : "off",
                       session.settings().captures ? "on" : "off",
+                      swchess::anim::cadenceName(session.settings().cadence),
                       session.mixer().driverName().c_str());
         SDL_SetWindowTitle(window, title);
     }
