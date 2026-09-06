@@ -137,6 +137,38 @@ int main(int argc, char** argv) {
         check(withSync > 0, "some captures block on a sound");
         std::printf("%d of %zu captures block on a sound\n", withSync, names.size());
 
+        // Pose 0 is decoded without being drawn, but the original still starts
+        // its sound at time 0. Only these three captures resolve a cue there;
+        // every other capture's pose 0 cue is missing or unresolved, so its
+        // preSounds stays empty.
+        {
+            const std::map<std::string, std::string> expectedPreSound = {
+                {"BPWN", "GROWL2.WAV"},
+                {"BQWQ", "MNDPRB.WAV"},
+                {"WPBQ", "BREATH.WAV"},
+            };
+            for (const std::string& name : names) {
+                swchess::anim::CaptureTimeline timeline =
+                    swchess::anim::loadCapture(cdDir, name, sounds);
+                auto expected = expectedPreSound.find(name);
+                if (expected == expectedPreSound.end()) {
+                    check(timeline.preSounds.empty(), name + " has no pre-sound");
+                    continue;
+                }
+                check(timeline.preSounds.size() == 1, name + " has exactly one pre-sound");
+                if (timeline.preSounds.size() == 1) {
+                    const swchess::anim::CaptureSound& pre = timeline.preSounds.front();
+                    check(pre.resolved, name + "'s pre-sound resolves");
+                    check(pre.resource == expected->second,
+                          name + "'s pre-sound names " + expected->second);
+                    check(pre.startMs == 0, name + "'s pre-sound starts at time 0");
+                }
+
+                std::map<std::string, int> fired = sweep(timeline, 1000.0 / 60.0);
+                check(fired["0@0"] == 1, name + " fires its pre-sound once at 16.67 ms steps");
+            }
+        }
+
         // A capture with cues of all three kinds, checked at two step sizes.
         for (const std::string& name : {std::string("BBWQ"), std::string("WBBR"),
                                         std::string("BKWR"), std::string("WQBR")}) {
@@ -301,6 +333,25 @@ int main(int argc, char** argv) {
                 swchess::anim::PlayerUpdate after = skipper.advance(bbwb.endMs + 1000);
                 check(!after.draw.visible && after.draw.frame == nullptr,
                       "a skipped interpolated capture draws nothing");
+            }
+        }
+
+        // BPWN carries a pre-sound. When the interpolation run has already
+        // written its 60 frames per second sequence, start() compares the
+        // preSounds the same way it compares pose cues; a mismatch throws.
+        {
+            swchess::anim::CaptureTimeline bpwn = swchess::anim::loadCapture(cdDir, "BPWN", sounds);
+            std::optional<swchess::anim::InterpSequence> bpwnInterp =
+                swchess::anim::loadInterp(assetsDir, "BPWN");
+            if (!bpwnInterp.has_value()) {
+                std::printf("no interp60 manifest for BPWN under %s, skipping that check\n",
+                            assetsDir.c_str());
+            } else {
+                check(bpwnInterp->preSounds.size() == 1, "BPWN's manifest carries one pre-sound");
+                swchess::anim::CapturePlayer bpwnPlayer;
+                bpwnPlayer.start(&bpwn, &bpwnInterp.value(), 0);
+                check(bpwnPlayer.interp() == &bpwnInterp.value(),
+                      "BPWN's timeline and interp60 sequence agree, so start accepts both");
             }
         }
 

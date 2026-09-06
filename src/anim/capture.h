@@ -88,6 +88,13 @@ struct CaptureTimeline {
     int offsetX = 0;
     int offsetY = 0;
 
+    // Pose 0's own sound, when it names a resolved cue. The original decodes
+    // pose 0 without drawing it, but still starts this sound at time 0 (see
+    // section 5, step 2 of the research note). A cue that resolves to
+    // nothing stays silent the way an unresolved pose sound does, so this
+    // stays empty rather than holding an unresolved entry.
+    std::vector<CaptureSound> preSounds;
+
     bool hasEndSound = false;
     CaptureSound endSound;  // [NAME_OFFSET] wav, played after the hold
 

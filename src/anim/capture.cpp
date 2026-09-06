@@ -244,6 +244,9 @@ CaptureTimeline loadCapture(const std::string& cdDir, const std::string& name,
             pose.hasSound = hasSound;
             pose.sound = sound;
             timeline.poses.push_back(pose);
+        } else if (hasSound && sound.resolved) {
+            // Pose 0 never reaches the screen, but its sound still starts.
+            timeline.preSounds.push_back(sound);
         }
 
         lastStart = t0;

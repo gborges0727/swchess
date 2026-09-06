@@ -37,10 +37,24 @@ void requireSameCues(const CaptureTimeline& timeline, const InterpSequence& inte
         throw std::runtime_error(where + " ends at a different time than the timeline");
     }
     std::size_t at = 0;
+    std::size_t preAt = 0;
     for (const SoundEvent& event : schedule) {
         if (event.poseIndex == SoundEvent::kEndSoundIndex) {
             if (!interp.hasFinalSound || interp.finalSound.name != event.sound->resource) {
                 throw std::runtime_error(where + " disagrees about the final sound");
+            }
+            continue;
+        }
+        if (event.poseIndex == 0) {
+            // A pre-sound: pose 0's own cue, fired at time 0 without a pose.
+            if (preAt >= interp.preSounds.size()) {
+                throw std::runtime_error(where + " is missing a pre-sound cue");
+            }
+            const InterpSound& mine = interp.preSounds[preAt];
+            ++preAt;
+            if (mine.startMs != event.timeMs || mine.name != event.sound->resource ||
+                mine.durationMs != event.sound->durationMs) {
+                throw std::runtime_error(where + " disagrees about the pre-sound cue");
             }
             continue;
         }
@@ -57,6 +71,9 @@ void requireSameCues(const CaptureTimeline& timeline, const InterpSequence& inte
     }
     if (at != interp.sounds.size()) {
         throw std::runtime_error(where + " carries a sound cue the timeline does not");
+    }
+    if (preAt != interp.preSounds.size()) {
+        throw std::runtime_error(where + " carries a pre-sound cue the timeline does not");
     }
     if (interp.hasFinalSound && !timeline.hasEndSound) {
         throw std::runtime_error(where + " carries a final sound the timeline does not");
@@ -85,6 +102,13 @@ void CapturePlayer::start(const CaptureTimeline* timeline, const InterpSequence*
         return;
     }
 
+    for (const CaptureSound& pre : timeline->preSounds) {
+        SoundEvent event;
+        event.poseIndex = 0;  // never a real pose index; those start at 1
+        event.sound = &pre;
+        event.timeMs = pre.startMs;
+        schedule_.push_back(event);
+    }
     for (const CapturePose& pose : timeline->poses) {
         if (pose.hasSound) {
             SoundEvent event;
