@@ -65,6 +65,9 @@ add_subdirectory(src/text)
 # The playable game. It needs the chess, board, anim, audio and text modules,
 # so it comes after all of them.
 add_subdirectory(src/game)
+
+# The title sequence, the menu button row and the settings file.
+add_subdirectory(src/ui)
 add_subdirectory(src/save)
 
 # Two humans playing on the animated board.
