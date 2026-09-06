@@ -38,6 +38,13 @@ struct AnxFile {
     std::map<std::uint32_t, AnxRecord> records;
 };
 
+// Decodes one escape-byte RLE bitmap out of `data`. `start` points at its
+// BITMAPINFOHEADER and `end` is where the next record starts, or the end of the
+// buffer for the last one. The piece DLLs store their bitmaps this way too, so
+// piece_dll.cpp calls this on DLL bytes rather than repeating the decoder.
+AnxRecord decodeRleRecord(const std::vector<std::uint8_t>& data, std::size_t start,
+                          std::size_t end);
+
 // Reads and decodes every distinct record in the file at `path`.
 // Throws std::runtime_error when the file cannot be read or is too short.
 AnxFile loadAnx(const std::string& path);

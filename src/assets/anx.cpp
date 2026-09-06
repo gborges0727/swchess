@@ -46,8 +46,11 @@ std::vector<std::uint8_t> readFile(const std::string& path) {
     return data;
 }
 
+}  // namespace
+
 // Decodes the record that starts at `start` and may run up to `end`.
-AnxRecord decodeRecord(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end) {
+AnxRecord decodeRleRecord(const std::vector<std::uint8_t>& data, std::size_t start,
+                          std::size_t end) {
     AnxRecord record;
     std::uint32_t headerSize = readU32(data, start + 0);
     record.width = readI32(data, start + 4);
@@ -92,8 +95,6 @@ AnxRecord decodeRecord(const std::vector<std::uint8_t>& data, std::size_t start,
     return record;
 }
 
-}  // namespace
-
 AnxFile loadAnx(const std::string& path) {
     std::vector<std::uint8_t> data = readFile(path);
     if (data.size() < kBase) {
@@ -114,7 +115,7 @@ AnxFile loadAnx(const std::string& path) {
     for (std::size_t i = 0; i < sorted.size(); ++i) {
         std::size_t start = kBase + sorted[i];
         std::size_t end = (i + 1 < sorted.size()) ? kBase + sorted[i + 1] : data.size();
-        AnxRecord record = decodeRecord(data, start, end);
+        AnxRecord record = decodeRleRecord(data, start, end);
         record.offset = sorted[i];
         file.records.emplace(sorted[i], std::move(record));
     }

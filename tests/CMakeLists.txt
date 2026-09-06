@@ -42,3 +42,53 @@ add_test(NAME anx.corpus_totals
 add_test(NAME viewer.dump_frame
          COMMAND swchess-viewer --cd "${SWCHESS_CD_DIR}" --capture BBWB --bg SPACE256
                  --dump-frame 39 "${CMAKE_BINARY_DIR}/bbwb_39.ppm")
+
+# The second oracle covers the piece DLLs, the piece sheets and the sound
+# resources. tests/assets_dump.py writes it with the Python extractor, and
+# assets_oracle_test rebuilds the same lines from src/assets.
+set(SWCHESS_ASSET_ORACLE "${CMAKE_BINARY_DIR}/assets_oracle.txt")
+
+add_custom_command(
+  OUTPUT "${SWCHESS_ASSET_ORACLE}"
+  COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_SOURCE_DIR}/tests/assets_dump.py"
+          --cd "${SWCHESS_CD_DIR}" --out "${SWCHESS_ASSET_ORACLE}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/tests/assets_dump.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/ne.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/dib.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/ini.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/audio.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/sheets.py"
+          "${CMAKE_SOURCE_DIR}/tools/extract/pieces.py"
+          "${CMAKE_SOURCE_DIR}/tools/reference/anx.py"
+  COMMENT "Decoding the piece DLLs, sheets and sounds with the Python extractor"
+  VERBATIM
+)
+add_custom_target(assets_oracle ALL DEPENDS "${SWCHESS_ASSET_ORACLE}")
+
+add_executable(assets_oracle_test assets_oracle_test.cpp)
+target_link_libraries(assets_oracle_test PRIVATE swchess_assets)
+target_compile_options(assets_oracle_test PRIVATE -Wall -Wextra)
+add_dependencies(assets_oracle_test assets_oracle)
+
+set(SWCHESS_PIECES AT BF C3 CB DV EM LO LS R2 SP ST YO)
+foreach(piece IN LISTS SWCHESS_PIECES)
+  add_test(NAME piece.${piece}
+           COMMAND assets_oracle_test "${SWCHESS_ASSET_ORACLE}" "${SWCHESS_CD_DIR}"
+                   piece "${piece}")
+endforeach()
+
+set(SWCHESS_SETS 2DSET WHTBTM WHTTOP FACING)
+foreach(set IN LISTS SWCHESS_SETS)
+  add_test(NAME sheet.${set}
+           COMMAND assets_oracle_test "${SWCHESS_ASSET_ORACLE}" "${SWCHESS_CD_DIR}"
+                   cells "${set}")
+endforeach()
+
+# All 110 WAVE records in SWCAUDIO.DLL plus the four loose WAV files.
+add_test(NAME audio.waves
+         COMMAND assets_oracle_test "${SWCHESS_ASSET_ORACLE}" "${SWCHESS_CD_DIR}" waves)
+
+# 1344 piece bitmaps, 48 sheet cells, and 110 WAVE records under 109 names.
+add_test(NAME assets.totals
+         COMMAND assets_oracle_test "${SWCHESS_ASSET_ORACLE}" "${SWCHESS_CD_DIR}"
+                 totals 1344 48 110 109)

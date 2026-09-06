@@ -21,6 +21,11 @@ find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 add_library(swchess_assets STATIC
   src/assets/anx.cpp
   src/assets/bmp.cpp
+  src/assets/ne.cpp
+  src/assets/ini.cpp
+  src/assets/piece_dll.cpp
+  src/assets/sheet.cpp
+  src/assets/wav.cpp
 )
 target_include_directories(swchess_assets PUBLIC src)
 target_compile_options(swchess_assets PRIVATE -Wall -Wextra)
@@ -40,6 +45,11 @@ target_compile_options(swchess-viewer PRIVATE -Wall -Wextra)
 # The chess rules module arrives separately. Build it when it is present.
 if(EXISTS ${CMAKE_SOURCE_DIR}/src/chess/CMakeLists.txt)
   add_subdirectory(src/chess)
+endif()
+
+# The audio module arrives separately too. Build it when it is present.
+if(EXISTS ${CMAKE_SOURCE_DIR}/src/audio/CMakeLists.txt)
+  add_subdirectory(src/audio)
 endif()
 
 include(CTest)
