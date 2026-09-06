@@ -78,6 +78,10 @@ stepping and a choice of background, use the viewer.
 ./build/swchess-viewer --cd original/win3x/cd --assets assets --review BBWB
 ```
 
+The macOS app bundle built by `scripts/build-app.sh` carries `swchess-viewer`
+too, at `Contents/MacOS/swchess-viewer`, so review mode works from the bundle
+without a separate build tree.
+
 ## Layout
 
 | Path | Contents |

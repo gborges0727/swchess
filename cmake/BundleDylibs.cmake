@@ -15,6 +15,16 @@ endif()
 
 file(MAKE_DIRECTORY "${FRAMEWORKS_DIR}")
 
+# A binary copied into the bundle after it was linked (swchess-viewer, which
+# is not the bundle's own MACOSX_BUNDLE target) carries no rpath pointing at
+# Contents/Frameworks yet. Add one. Running this twice on the same binary is
+# harmless: install_name_tool then fails because the rpath is already there,
+# and that failure is ignored.
+if(ADD_RPATH)
+  execute_process(COMMAND install_name_tool -add_rpath "${ADD_RPATH}" "${APP_BINARY}"
+                  OUTPUT_QUIET ERROR_QUIET)
+endif()
+
 # Reads the install names a Mach-O file loads and returns the ones macOS does
 # not provide.
 function(swchess_foreign_deps target out_var)

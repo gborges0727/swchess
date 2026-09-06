@@ -119,6 +119,10 @@ if(APPLE)
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "@executable_path/../Frameworks")
 
+  # The review viewer ships inside the bundle too, so it needs to exist
+  # before the bundle's post-build step copies it in.
+  add_dependencies(StarWarsChess swchess-viewer)
+
   set(SWCHESS_APP "$<TARGET_BUNDLE_DIR:StarWarsChess>")
   add_custom_command(TARGET StarWarsChess POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy
@@ -130,5 +134,18 @@ if(APPLE)
             "-DFRAMEWORKS_DIR=${SWCHESS_APP}/Contents/Frameworks"
             -P "${CMAKE_SOURCE_DIR}/cmake/BundleDylibs.cmake"
     COMMENT "Copying SDL3 into the bundle and fixing its load paths"
+    VERBATIM)
+
+  add_custom_command(TARGET StarWarsChess POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:swchess-viewer>"
+            "${SWCHESS_APP}/Contents/MacOS/swchess-viewer"
+    COMMAND chmod +x "${SWCHESS_APP}/Contents/MacOS/swchess-viewer"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DAPP_BINARY=${SWCHESS_APP}/Contents/MacOS/swchess-viewer"
+            "-DFRAMEWORKS_DIR=${SWCHESS_APP}/Contents/Frameworks"
+            "-DADD_RPATH=@executable_path/../Frameworks"
+            -P "${CMAKE_SOURCE_DIR}/cmake/BundleDylibs.cmake"
+    COMMENT "Copying swchess-viewer into the bundle and fixing its load paths"
     VERBATIM)
 endif()
