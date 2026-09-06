@@ -5,9 +5,11 @@
 //   swchess-viewer --cd original/win3x/cd --capture BBWB [--bg SPACE256]
 //   swchess-viewer --cd original/win3x/cd --capture BBWB --dump-frame 39 out.ppm
 //   swchess-viewer --cd original/win3x/cd --dump-timeline BBWB
+//   swchess-viewer --cd original/win3x/cd --dump-board WHTBTM out.ppm [--fen "..."]
+//   swchess-viewer --cd original/win3x/cd --hit 108 130
 //
-// The --dump-frame and --dump-timeline forms never open a window, so they run
-// on a machine with no display.
+// The --dump-frame, --dump-timeline, --dump-board and --hit forms never open a
+// window, so they run on a machine with no display.
 
 #include <SDL3/SDL.h>
 
@@ -17,6 +19,7 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +29,10 @@
 #include "assets/bmp.h"
 #include "assets/wav.h"
 #include "audio/audio.h"
+#include "board/board_view.h"
+#include "board/geometry.h"
+#include "board/placement.h"
+#include "chess.h"
 #include "render/compositor.h"
 
 namespace {
@@ -47,13 +54,22 @@ struct Options {
     int dumpFrame = -1;
     std::string dumpPath;
     std::string dumpTimeline;
+    std::string dumpBoardSet;
+    std::string dumpBoardPath;
+    std::string fen;
+    bool hit = false;
+    int hitX = 0;
+    int hitY = 0;
 };
 
 void printUsage() {
     std::fprintf(stderr,
                  "usage: swchess-viewer --cd <dir> --capture <NAME> [--bg <NAME>]\n"
                  "       swchess-viewer --cd <dir> --capture <NAME> --dump-frame <N> <out.ppm>\n"
-                 "       swchess-viewer --cd <dir> --dump-timeline <NAME>\n");
+                 "       swchess-viewer --cd <dir> --dump-timeline <NAME>\n"
+                 "       swchess-viewer --cd <dir> --dump-board <SET> <out.ppm> [--fen <FEN>]\n"
+                 "       swchess-viewer --cd <dir> --hit <x> <y> [--set <SET>]\n"
+                 "       a set is WHTBTM, WHTTOP, FACING or 2D\n");
 }
 
 bool parseOptions(int argc, char** argv, Options& options) {
@@ -89,6 +105,29 @@ bool parseOptions(int argc, char** argv, Options& options) {
             const char* value = next("--dump-timeline");
             if (value == nullptr) return false;
             options.dumpTimeline = value;
+        } else if (arg == "--dump-board") {
+            const char* set = next("--dump-board");
+            if (set == nullptr) return false;
+            options.dumpBoardSet = set;
+            const char* path = next("--dump-board output path");
+            if (path == nullptr) return false;
+            options.dumpBoardPath = path;
+        } else if (arg == "--set") {
+            const char* value = next("--set");
+            if (value == nullptr) return false;
+            options.dumpBoardSet = value;
+        } else if (arg == "--fen") {
+            const char* value = next("--fen");
+            if (value == nullptr) return false;
+            options.fen = value;
+        } else if (arg == "--hit") {
+            const char* x = next("--hit x");
+            if (x == nullptr) return false;
+            const char* y = next("--hit y");
+            if (y == nullptr) return false;
+            options.hit = true;
+            options.hitX = std::atoi(x);
+            options.hitY = std::atoi(y);
         } else if (arg == "-h" || arg == "--help") {
             printUsage();
             return false;
@@ -101,7 +140,8 @@ bool parseOptions(int argc, char** argv, Options& options) {
         printUsage();
         return false;
     }
-    if (options.capture.empty() && options.dumpTimeline.empty()) {
+    if (options.capture.empty() && options.dumpTimeline.empty() &&
+        options.dumpBoardPath.empty() && !options.hit) {
         printUsage();
         return false;
     }
@@ -166,6 +206,75 @@ int dumpTimeline(const Options& options) {
                     timeline.endSound.resolved ? "resolved" : "silent",
                     static_cast<long long>(timeline.endSound.startMs));
     }
+    return 0;
+}
+
+// Reads the position the board forms use: the start position, or the FEN the
+// caller passed.
+bool positionFor(const Options& options, swchess::chess::Position& position) {
+    if (options.fen.empty()) {
+        position = swchess::chess::Position::start();
+        return true;
+    }
+    std::optional<swchess::chess::Position> parsed =
+        swchess::chess::Position::fromFen(options.fen);
+    if (!parsed.has_value()) {
+        std::fprintf(stderr, "cannot read the FEN %s\n", options.fen.c_str());
+        return false;
+    }
+    position = *parsed;
+    return true;
+}
+
+// Draws one position with one set over its own background.
+int dumpBoard(const Options& options) {
+    std::optional<swchess::board::SetId> set =
+        swchess::board::parseSetName(options.dumpBoardSet);
+    if (!set.has_value()) {
+        std::fprintf(stderr, "unknown set %s, use WHTBTM, WHTTOP, FACING or 2D\n",
+                     options.dumpBoardSet.c_str());
+        return 1;
+    }
+    swchess::chess::Position position;
+    if (!positionFor(options, position)) {
+        return 1;
+    }
+    swchess::board::BoardScene scene = swchess::board::loadBoardScene(options.cdDir, *set);
+    std::vector<swchess::board::PieceSprite> sprites =
+        swchess::board::drawOrder(position, scene);
+    swchess::Image canvas;
+    swchess::board::renderPosition(position, scene, canvas);
+    swchess::writePPM(canvas, options.dumpBoardPath);
+    std::printf("wrote %s, set %s over %s, %zu pieces, cells %dx%d, board center %d,%d\n",
+                options.dumpBoardPath.c_str(), swchess::board::setKey(*set),
+                scene.backgroundSource.c_str(), sprites.size(), scene.sheet.cellWidth,
+                scene.sheet.cellHeight, scene.geometry.center().x, scene.geometry.center().y);
+    return 0;
+}
+
+// Prints the square under one pixel.
+int printHit(const Options& options) {
+    swchess::board::SetId set = swchess::board::SetId::WhiteBottom;
+    if (!options.dumpBoardSet.empty()) {
+        std::optional<swchess::board::SetId> parsed =
+            swchess::board::parseSetName(options.dumpBoardSet);
+        if (!parsed.has_value()) {
+            std::fprintf(stderr, "unknown set %s\n", options.dumpBoardSet.c_str());
+            return 1;
+        }
+        set = *parsed;
+    }
+    swchess::board::BoardSettings settings =
+        swchess::board::loadBoardSettingsFromCd(options.cdDir);
+    swchess::board::BoardGeometry geometry = swchess::board::geometryFor(set, settings);
+    std::optional<swchess::chess::Square> square =
+        swchess::board::hitTest(geometry, options.hitX, options.hitY);
+    if (!square.has_value()) {
+        std::printf("%d,%d is off the board\n", options.hitX, options.hitY);
+        return 0;
+    }
+    std::printf("%d,%d is %s\n", options.hitX, options.hitY,
+                swchess::chess::squareName(*square).c_str());
     return 0;
 }
 
@@ -420,6 +529,12 @@ int main(int argc, char** argv) {
         }
         if (options.dumpFrame >= 0) {
             return dumpFrame(options);
+        }
+        if (!options.dumpBoardPath.empty()) {
+            return dumpBoard(options);
+        }
+        if (options.hit) {
+            return printHit(options);
         }
         return runViewer(options);
     } catch (const std::exception& error) {

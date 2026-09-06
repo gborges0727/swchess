@@ -57,6 +57,7 @@ endif()
 # test registers with CTest, so testing turns on before the subdirectory.
 include(CTest)
 add_subdirectory(src/anim)
+add_subdirectory(src/board)
 
 # The text module reads the language string tables and the two bitmap fonts.
 add_subdirectory(src/text)
