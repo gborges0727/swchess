@@ -75,10 +75,15 @@ non-zero if any of them changes.
   `table_y`, the sum as `x` and `y`, and the dead per-frame INI keys as `ini_x`
   and `ini_y`.
 - The player decodes pose 0 and frees it without drawing it, so a capture shows
-  one fewer pose than its timeline lists. `resolved.json` starts at index 1.
-- Pose `i` appears at `(i - 1) * frame_delay`, where `frame_delay` is 120 from
-  `CM.INI [defaults]`. A blocking sound earlier in the run pushes every later
-  pose out by however long it stalled the loop.
+  one fewer pose than its timeline lists. `resolved.json` starts at index 1, but
+  pose 0's iteration still spends a full `frame_delay` before pose 1 appears,
+  so pose `i` appears at `i * frame_delay`, where `frame_delay` is 120 from
+  `CM.INI [defaults]`. A blocking sound earlier in the run (pose 0's included)
+  pushes every later pose out by however long it stalled the loop. Pose 0's own
+  sound, when it has one, plays and is never drawn over, so it is recorded
+  separately in the top-level `pre_sounds` list (each entry's `t_ms`, `name`,
+  `mode` and `duration_ms` match a pose's `sound` fields) instead of being
+  dropped.
 - After the last pose the player waits `[BBWB_OFFSET] hold` milliseconds, or
   1000 when the key is absent, then plays `[BBWB_OFFSET] wav` and waits for it
   to finish. `end_ms` is the moment after all of that, when the last pose is

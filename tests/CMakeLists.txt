@@ -92,3 +92,11 @@ add_test(NAME audio.waves
 add_test(NAME assets.totals
          COMMAND assets_oracle_test "${SWCHESS_ASSET_ORACLE}" "${SWCHESS_CD_DIR}"
                  totals 1344 48 110 109)
+
+# Every assets/captures/*/resolved.json must match the C++ player's own
+# --dump-timeline output exactly. Skips itself if assets/ has not been
+# generated with `python3 -m tools.extract`.
+add_test(NAME timeline.parity
+         COMMAND python3 "${CMAKE_SOURCE_DIR}/tests/timeline_parity.py"
+                 $<TARGET_FILE:swchess-viewer> "${CMAKE_SOURCE_DIR}/original/win3x/cd"
+                 "${CMAKE_SOURCE_DIR}/assets")

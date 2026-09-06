@@ -86,11 +86,22 @@ def resolve_final_wav(raw, sound_index):
 def build_timing(entries, frame_delay, hold_ms, final_wav):
     """Walk the timeline the way FUN_1058_0a0a does and time every pose.
 
-    Returns the drawn poses, the time the last pose is erased, and how much time
-    the blocking sounds added.
+    Pose 0 is decoded but never drawn, yet its iteration still spends a full
+    frame_delay (and blocks on its own sound the same as any other pose)
+    before the loop moves on, so every later pose lands frame_delay later than
+    it would if pose 0's iteration were skipped outright. This mirrors
+    src/anim/capture.cpp's loop exactly: the per-iteration step is
+    max(block, frame_delay) whether or not that iteration draws.
+
+    Returns the drawn poses, the time the last pose is erased, how much time
+    the blocking sounds added, and pose 0's own sound (if it has one) as
+    pre_sounds.
     """
     poses = []
+    pre_sounds = []
     clock = 0
+    last_start = 0
+    last_step = 0
     pending_end = None
     blocking_count = 0
     blocking_ms = 0
@@ -98,6 +109,7 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
     for entry in entries:
         start = clock
         sound = None
+        sound_start = clock
         cue = entry["sound"]
         if cue and cue["status"] == "resolved":
             duration = cue["duration_ms"] or 0
@@ -109,6 +121,7 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
                     blocking_ms += pending_end - clock
                     clock = pending_end
                 pending_end = None
+            sound_start = clock
             if pause == 1:
                 # sndPlaySound with SND_SYNC blocks for the whole sound.
                 clock += duration
@@ -128,12 +141,30 @@ def build_timing(entries, frame_delay, hold_ms, final_wav):
             record["t_ms"] = clock
             record["sound"] = sound
             poses.append(record)
-            clock = max(clock, start + frame_delay)
+        elif sound:
+            pre_sounds.append(
+                {
+                    "t_ms": sound_start,
+                    "name": sound["name"],
+                    "mode": sound["mode"],
+                    "duration_ms": sound["duration_ms"],
+                }
+            )
 
-    end_ms = clock + hold_ms
+        # Every iteration, drawn or not, spends max(block, frame_delay)
+        # before the next one starts.
+        last_start = start
+        last_step = max(clock - start, frame_delay)
+        clock = start + last_step
+
+    if entries:
+        loop_end = last_start + last_step
+        end_ms = max(loop_end, last_start + hold_ms)
+    else:
+        end_ms = hold_ms
     if final_wav:
         end_ms += final_wav["duration_ms"]
-    return poses, end_ms, blocking_count, blocking_ms
+    return poses, end_ms, blocking_count, blocking_ms, pre_sounds
 
 
 def extract(cd_dir, out_dir, sound_index, frame_delay_default):
@@ -270,7 +301,7 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
             )
         total_timeline += len(entries)
 
-        poses, end_ms, blocking_count, blocking_ms = build_timing(
+        poses, end_ms, blocking_count, blocking_ms, pre_sounds = build_timing(
             entries, frame_delay_default, hold_ms, final_wav
         )
         total_poses += len(poses)
@@ -296,6 +327,7 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
             "frame_delay_ms": frame_delay_default,
             "hold_ms": hold_ms,
             "canvas": dict(CANVAS),
+            "pre_sounds": pre_sounds,
             "poses": [
                 {
                     "index": p["index"],

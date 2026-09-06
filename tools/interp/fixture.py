@@ -7,9 +7,12 @@ schema from original/win3x/cd. Delete this file once the real writer ships.
 Frame positions come from the second table in the ANX header at file offset
 0x25c, which holds one signed 16-bit x and y per frame. The player adds the
 [<NAME>_OFFSET] x and y from the capture INI to those values, so this does the
-same. A missing offset key adds nothing.
+same. A missing x defaults to 215 and a missing y to 100, the numbers
+GetPrivateProfileInt is called with in FUN_1058_0e15.
 
-Pose i appears at (i - 1) * frame_delay_ms and the last pose stays on screen for
+The player decompresses record 0 and starts its sound but never draws it, so
+record 0 leaves only its sound behind, in pre_sounds at time 0. Record i becomes
+pose i and appears at i * frame_delay_ms. The last pose stays on screen for
 hold_ms, so end_ms is (count - 1) * frame_delay_ms + hold_ms.
 """
 
@@ -26,6 +29,8 @@ from tools.reference import anx  # noqa: E402
 POSITION_TABLE = 0x25C
 FRAME_DELAY_MS = 120
 HOLD_MS = 1000
+DEFAULT_OFFSET_X = 215
+DEFAULT_OFFSET_Y = 100
 CANVAS = {"x": 0, "y": 0, "w": 640, "h": 480}
 SOUND_MODES = {0: "async", 1: "sync", 2: "async"}
 
@@ -63,45 +68,50 @@ def build(capture, cd_dir):
     count, offsets, records = anx.parse(data)
 
     offset_section = ini.get(capture + "_OFFSET", {})
-    off_x = int(offset_section.get("x", 0))
-    off_y = int(offset_section.get("y", 0))
+    off_x = int(offset_section.get("x", DEFAULT_OFFSET_X))
+    off_y = int(offset_section.get("y", DEFAULT_OFFSET_Y))
     hold_ms = int(offset_section.get("hold", HOLD_MS))
     final_wav = offset_section.get("wav") or None
     if final_wav:
         final_wav = final_wav.upper()
 
+    def sound_of(record_index):
+        frame = ini.get("%s_%03d" % (capture, record_index + 1), {})
+        name = frame.get("wav")
+        if not name:
+            return None
+        pause = int(frame.get("pause", 0) or 0)
+        return {
+            "name": name.upper(),
+            "mode": SOUND_MODES.get(pause, "async"),
+            "pause": pause,
+            "duration_ms": None,
+        }
+
     poses = []
-    for i in range(count):
+    for i in range(1, count):
         raw_x, raw_y = struct.unpack_from("<hh", data, POSITION_TABLE + 4 * i)
         record = records[offsets[i]]
-        key = "%s_%03d" % (capture, i + 1)
-        frame = ini.get(key, {})
-        sound = None
-        name = frame.get("wav")
-        if name:
-            pause = int(frame.get("pause", 0) or 0)
-            sound = {
-                "name": name.upper(),
-                "mode": SOUND_MODES.get(pause, "async"),
-                "pause": pause,
-                "duration_ms": None,
-            }
         poses.append({
-            "index": i + 1,
+            "index": i,
             "t_ms": i * FRAME_DELAY_MS,
             "image": "rec%08x.png" % offsets[i],
             "x": raw_x + off_x,
             "y": raw_y + off_y,
             "w": record["width"],
             "h": record["height"],
-            "sound": sound,
+            "sound": sound_of(i),
         })
+
+    first_sound = sound_of(0)
+    pre_sounds = [{"t_ms": 0, "sound": first_sound}] if first_sound else []
 
     return {
         "capture": capture,
         "frame_delay_ms": FRAME_DELAY_MS,
         "hold_ms": hold_ms,
         "canvas": dict(CANVAS),
+        "pre_sounds": pre_sounds,
         "poses": poses,
         "end_ms": (count - 1) * FRAME_DELAY_MS + hold_ms,
         "final_wav": final_wav,

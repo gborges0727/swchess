@@ -1,27 +1,27 @@
-"""Generate the 60 fps interpolated frames for one capture.
+"""Generate the interpolated frames for one capture.
 
 The run has four parts. It composes every pose on one padded canvas, writes the
-colour and alpha pictures RIFE reads, runs RIFE once per channel over the whole
-capture, then divides the colour back out and writes RGBA frames plus a
-manifest.
+colour and alpha pictures RIFE reads, runs RIFE once per transition per channel,
+then divides the colour back out and writes RGBA frames plus a manifest.
 
 RIFE's directory mode maps output i to input position i * count / numframe and
-interpolates between the two poses around it. Picking numframe so that ratio
-equals one 60 fps step measured in poses puts every output exactly on a sample
-time, which is why the whole capture takes two RIFE processes instead of one per
-frame. The pose list is padded with copies of the last pose until the ratio is
-exact; the padding only feeds output positions past the last real pose, which
-the hold covers with a copy instead.
+interpolates between the two inputs around it. A directory holding just the two
+poses of one transition, run with numframe = 2 * D, therefore answers every time
+step i / D in one process. D is the common denominator of the time steps that
+transition needs, so one process covers all seven or eight samples inside a
+120 ms gap instead of seven or eight processes. A transition whose denominator
+comes out too large falls back to one process per sample.
 """
 
 import hashlib
 import json
+import math
 import multiprocessing
 import os
 import shutil
 import subprocess
-import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 
 from . import fixture, images, png, timeline
@@ -29,6 +29,8 @@ from . import fixture, images, png, timeline
 MODEL_NAME = "rife-v4.6"
 DEFAULT_BINARY = ".cache/rife/bin/rife-ncnn-vulkan"
 DEFAULT_MODEL = ".cache/rife/bin/rife-v4.6"
+MAX_DENOMINATOR = 128
+RIFE_PROCESSES = 3
 
 
 def sha256(path):
@@ -60,7 +62,7 @@ def load_spec(assets, capture, resolved_path):
 
 
 def _decimal(value):
-    """Round a Fraction of milliseconds to six decimal places as a float."""
+    """Round a Fraction of milliseconds to six decimal places."""
     scaled = value * 1000000
     whole = (scaled.numerator * 2 + scaled.denominator) // (scaled.denominator * 2)
     return whole / 1000000
@@ -69,13 +71,12 @@ def _decimal(value):
 def prepare(spec, source_dir, work_dir):
     """Compose every pose and write the colour and alpha pictures for RIFE.
 
-    Returns the canvas rectangle and the composed RGBA buffers.
+    Returns the canvas rectangle and the composed RGBA buffer of every pose.
     """
     rect = images.union_rect(spec["poses"])
     _, _, width, height = rect
-    rgb_dir = os.path.join(work_dir, "rgb")
-    alpha_dir = os.path.join(work_dir, "alpha")
-    for path in (rgb_dir, alpha_dir):
+    for name in ("rgb", "alpha"):
+        path = os.path.join(work_dir, name)
         shutil.rmtree(path, ignore_errors=True)
         os.makedirs(path)
     composed = []
@@ -83,47 +84,71 @@ def prepare(spec, source_dir, work_dir):
         rgba = images.compose(os.path.join(source_dir, pose["image"]), pose, rect)
         composed.append(rgba)
         rgb, alpha = images.split(rgba)
-        png.write_rgb(os.path.join(rgb_dir, "%05d.png" % i), width, height,
+        png.write_rgb(os.path.join(work_dir, "rgb", "%05d.png" % i), width, height,
                       images.rows(rgb, width, 3), level=1)
-        png.write_gray(os.path.join(alpha_dir, "%05d.png" % i), width, height,
+        png.write_gray(os.path.join(work_dir, "alpha", "%05d.png" % i), width, height,
                        images.rows(alpha, width, 1), level=1)
     return rect, composed
 
 
-def pad_inputs(work_dir, count, multiple):
-    """Copy the last pose picture until the input count divides evenly."""
-    padded = count
-    while padded % multiple:
-        for name in ("rgb", "alpha"):
-            src = os.path.join(work_dir, name, "%05d.png" % (count - 1))
-            shutil.copyfile(src, os.path.join(work_dir, name, "%05d.png" % padded))
-        padded += 1
-    return padded
-
-
-def run_rife(binary, model, in_dir, out_dir, numframe, gpu=None):
-    """Run one RIFE pass over a directory and return the command line."""
-    shutil.rmtree(out_dir, ignore_errors=True)
-    os.makedirs(out_dir)
-    cmd = [binary, "-m", model, "-i", in_dir, "-o", out_dir, "-n", str(numframe)]
-    if gpu is not None:
-        cmd += ["-g", str(gpu)]
+def _run(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError("rife failed: %s\n%s" % (" ".join(cmd), result.stderr[-2000:]))
     return cmd
 
 
-def run_rife_pair(binary, model, first, second, out_path, s, gpu=None):
-    """Run one RIFE inference for a single time step."""
-    cmd = [binary, "-m", model, "-0", first, "-1", second,
-           "-s", "%.9f" % s, "-o", out_path]
-    if gpu is not None:
-        cmd += ["-g", str(gpu)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError("rife failed: %s\n%s" % (" ".join(cmd), result.stderr[-2000:]))
-    return cmd
+def plan_rife(entries, work_dir, binary, model):
+    """Build the RIFE command list and say where each sample's pictures land.
+
+    Returns (commands, paths). `paths` maps a sample position to the colour and
+    alpha file the recombine step should read.
+    """
+    wanted = {}
+    for n, entry in enumerate(entries):
+        if entry["kind"] == timeline.INTERP:
+            wanted.setdefault(entry["pose"], []).append((n, entry["s"]))
+
+    commands = []
+    paths = {}
+    for k in sorted(wanted):
+        samples = wanted[k]
+        denominator = 1
+        for _, s in samples:
+            denominator = denominator * s.denominator // math.gcd(denominator, s.denominator)
+        if denominator <= MAX_DENOMINATOR:
+            for channel in ("rgb", "alpha"):
+                pair_dir = os.path.join(work_dir, channel, "pair%04d" % k)
+                out_dir = os.path.join(work_dir, channel + "_out", "pair%04d" % k)
+                shutil.rmtree(pair_dir, ignore_errors=True)
+                shutil.rmtree(out_dir, ignore_errors=True)
+                os.makedirs(pair_dir)
+                os.makedirs(out_dir)
+                for j in (0, 1):
+                    os.link(os.path.join(work_dir, channel, "%05d.png" % (k + j)),
+                            os.path.join(pair_dir, "%d.png" % j))
+                commands.append([binary, "-m", model, "-i", pair_dir, "-o", out_dir,
+                                 "-n", str(2 * denominator)])
+            for n, s in samples:
+                step = s.numerator * (denominator // s.denominator)
+                paths[n] = tuple(
+                    os.path.join(work_dir, channel + "_out", "pair%04d" % k,
+                                 "%08d.png" % (step + 1))
+                    for channel in ("rgb", "alpha"))
+        else:
+            for n, s in samples:
+                pair = []
+                for channel in ("rgb", "alpha"):
+                    out_dir = os.path.join(work_dir, channel + "_out")
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_path = os.path.join(out_dir, "%08d.png" % n)
+                    commands.append([binary, "-m", model,
+                                     "-0", os.path.join(work_dir, channel, "%05d.png" % k),
+                                     "-1", os.path.join(work_dir, channel, "%05d.png" % (k + 1)),
+                                     "-s", "%.9f" % float(s), "-o", out_path])
+                    pair.append(out_path)
+                paths[n] = tuple(pair)
+    return commands, paths
 
 
 def _recombine_one(job):
@@ -135,17 +160,28 @@ def _recombine_one(job):
         raise ValueError("rife returned %dx%d for %s" % (rw, rh, rgb_path))
     if rc != 3:
         rgb = bytes(b for i, b in enumerate(rgb) if i % rc < 3)
-    grey = bytes(alpha[i * ac] for i in range(width * height)) if ac != 1 else bytes(alpha)
+    grey = bytes(alpha) if ac == 1 else bytes(alpha[i * ac] for i in range(width * height))
     rgba = images.combine(bytes(rgb), grey, cutoff)
     png.write_rgba(out_path, width, height, images.rows(rgba, width, 4))
     return out_path
 
 
 def _write_copy(job):
-    """Worker: write one source copy frame."""
+    """Worker: write one source copy, hold, or empty frame."""
     out_path, width, height, rgba = job
     png.write_rgba(out_path, width, height, images.rows(rgba, width, 4))
     return out_path
+
+
+def describe(spec, entries, fps, rect):
+    """Print the plan for --dry-run."""
+    kinds = {}
+    for entry in entries:
+        kinds[entry["kind"]] = kinds.get(entry["kind"], 0) + 1
+    print("capture %s, %d poses, end %s ms, %d frames at %d fps"
+          % (spec["capture"], len(spec["poses"]), spec["end_ms"], len(entries), fps))
+    print("canvas %dx%d at (%d, %d)" % (rect[2], rect[3], rect[0], rect[1]))
+    print("frames by kind: %s" % ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
 
 
 def generate(capture, assets, out_dir, fps=60, resolved_path=None,
@@ -157,20 +193,9 @@ def generate(capture, assets, out_dir, fps=60, resolved_path=None,
     spec, spec_path, spec_hash = load_spec(assets, capture, resolved_path)
     source_dir = os.path.join(assets, "captures", capture)
     entries = timeline.plan(spec, fps)
-    gap = timeline.uniform_gap(spec)
-    step = Fraction(1000, fps) / gap if gap else None
-    batched = step is not None and step < 1
 
     if dry_run:
-        kinds = {}
-        for entry in entries:
-            kinds[entry["kind"]] = kinds.get(entry["kind"], 0) + 1
-        rect = images.union_rect(spec["poses"])
-        print("capture %s, %d poses, end %d ms, %d frames at %d fps"
-              % (capture, len(spec["poses"]), spec["end_ms"], len(entries), fps))
-        print("canvas %dx%d at (%d, %d)" % (rect[2], rect[3], rect[0], rect[1]))
-        print("frames by kind: %s" % ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
-        print("batched rife: %s" % ("yes, step %s poses" % step if batched else "no"))
+        describe(spec, entries, fps, images.union_rect(spec["poses"]))
         return None
 
     os.makedirs(out_dir, exist_ok=True)
@@ -179,43 +204,13 @@ def generate(capture, assets, out_dir, fps=60, resolved_path=None,
     rect, composed = prepare(spec, source_dir, work_dir)
     _, _, width, height = rect
 
-    commands = []
-    frame_paths = {}
-    if batched:
-        padded = pad_inputs(work_dir, len(spec["poses"]), step.numerator)
-        numframe = int(padded / step)
-        for name in ("rgb", "alpha"):
-            commands.append(run_rife(binary, model,
-                                     os.path.join(work_dir, name),
-                                     os.path.join(work_dir, name + "_out"),
-                                     numframe))
-        for n, entry in enumerate(entries):
-            if entry["kind"] == timeline.INTERP:
-                frame_paths[n] = (
-                    os.path.join(work_dir, "rgb_out", "%08d.png" % (n + 1)),
-                    os.path.join(work_dir, "alpha_out", "%08d.png" % (n + 1)),
-                )
-    else:
-        for name in ("rgb_out", "alpha_out"):
-            path = os.path.join(work_dir, name)
-            shutil.rmtree(path, ignore_errors=True)
-            os.makedirs(path)
-        for n, entry in enumerate(entries):
-            if entry["kind"] != timeline.INTERP:
-                continue
-            k = entry["pose"]
-            pair = []
-            for name in ("rgb", "alpha"):
-                out_path = os.path.join(work_dir, name + "_out", "%08d.png" % (n + 1))
-                commands.append(run_rife_pair(
-                    binary, model,
-                    os.path.join(work_dir, name, "%05d.png" % k),
-                    os.path.join(work_dir, name, "%05d.png" % (k + 1)),
-                    out_path, float(entry["s"])))
-                pair.append(out_path)
-            frame_paths[n] = tuple(pair)
+    commands, frame_paths = plan_rife(entries, work_dir, binary, model)
+    with ThreadPoolExecutor(max_workers=RIFE_PROCESSES) as pool:
+        for _ in pool.map(_run, commands):
+            pass
 
     index = {p["index"]: i for i, p in enumerate(spec["poses"])}
+    empty = bytes(width * height * 4)
     copy_jobs = []
     interp_jobs = []
     names = []
@@ -227,6 +222,8 @@ def generate(capture, assets, out_dir, fps=60, resolved_path=None,
             rgb_path, alpha_path = frame_paths[n]
             interp_jobs.append((rgb_path, alpha_path, out_path, width, height,
                                 images.ALPHA_CUTOFF))
+        elif entry["kind"] == timeline.BLANK:
+            copy_jobs.append((out_path, width, height, empty))
         else:
             copy_jobs.append((out_path, width, height,
                               bytes(composed[index[entry["source"][0]]])))
@@ -252,17 +249,14 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
                    binary, model, commands, source_dir, root):
     """Describe the run in enough detail to reproduce and check it."""
     x, y, width, height = rect
-    frames = []
-    for entry, name in zip(entries, names):
-        frame = {
-            "file": name,
-            "t_ms": _decimal(entry["t"]),
-            "duration_ms": _decimal(entry["duration"]),
-            "kind": entry["kind"],
-            "source": entry["source"],
-            "s": float(entry["s"]) if entry["s"] is not None else None,
-        }
-        frames.append(frame)
+    frames = [{
+        "file": name,
+        "t_ms": _decimal(entry["t"]),
+        "duration_ms": _decimal(entry["duration"]),
+        "kind": entry["kind"],
+        "source": entry["source"],
+        "s": float(entry["s"]) if entry["s"] is not None else None,
+    } for entry, name in zip(entries, names)]
     sounds = [{"pose": p["index"], "t_ms": p["t_ms"], "sound": p["sound"]}
               for p in spec["poses"] if p.get("sound")]
     return {
@@ -274,8 +268,8 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
             "model_sha256": sha256(os.path.join(model, "flownet.bin")),
             "binary_sha256": sha256(binary),
             "alpha_cutoff": images.ALPHA_CUTOFF,
-            "commands": [" ".join(c) for c in commands[:4]],
-            "command_count": len(commands),
+            "rife_commands": len(commands),
+            "rife_example": " ".join(commands[0]) if commands else None,
         },
         "input": {
             "resolved": spec_path,
@@ -294,6 +288,7 @@ def build_manifest(capture, spec, spec_path, spec_hash, entries, names, rect, fp
         "end_ms": spec["end_ms"],
         "final_wav": spec.get("final_wav"),
         "cuts": spec.get("cuts") or [],
+        "pre_sounds": spec.get("pre_sounds") or [],
         "sounds": sounds,
         "frames": frames,
     }
