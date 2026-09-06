@@ -65,6 +65,7 @@ add_subdirectory(src/text)
 # The playable game. It needs the chess, board, anim, audio and text modules,
 # so it comes after all of them.
 add_subdirectory(src/game)
+add_subdirectory(src/save)
 
 # Two humans playing on the animated board.
 add_executable(swchess src/app/game_main.cpp)
