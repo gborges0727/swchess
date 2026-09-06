@@ -133,32 +133,61 @@ WalkSequence loadWalkSection(const std::string& cdDir, const std::string& piece,
 // The returned reference lives as long as the process.
 const PieceDll& sharedPieceDll(const std::string& cdDir, const std::string& piece);
 
-// How WalkPlayer turns the INI steps into screen positions.
-//
-// IniSteps adds the INI dx and dy as the file writes them. The piece ends
-// wherever the steps put it, which is not always the target square, because
-// nothing in the research note says the original scales them. This is the
-// default until segment 14 is decompiled.
-//
-// ScaleToTarget stretches the cumulative displacement so the last step lands
-// on the target exactly. The shape of the walk survives and the length
-// changes.
-enum class WalkFit {
-    IniSteps,
-    ScaleToTarget,
+
+// One point of the screen line a moving piece follows.
+struct PathPoint {
+    int x = 0;
+    int y = 0;
+
+    friend bool operator==(const PathPoint&, const PathPoint&) = default;
 };
 
-const char* walkFitName(WalkFit fit);
+// The pixels GDI's LineDDA hands its callback, from (x0,y0) to (x1,y1). The
+// list starts on the first point and ends on the last, and it steps one pixel
+// along the longer axis each time.
+std::vector<PathPoint> linePoints(int x0, int y0, int x1, int y1);
+
+// The points a moving piece actually stands on. LINEPROC at 1008:5617 tests
+// the low bit of a counter and drops every other callback, so this keeps the
+// points at even positions and always keeps the last one.
+std::vector<PathPoint> walkPath(int x0, int y0, int x1, int y1);
+
+// The direction section a move walks in. `fileDelta` is the column change and
+// `rankDelta` is the rank change, both in board squares. A turned board
+// negates both, which is what FUN_1068_0013 does. Rows grow downward on
+// screen, so a move toward rank 1 walks south.
+Direction walkDirection(int fileDelta, int rankDelta, bool turned);
+
+// One walk frame lasts this long. FUN_1068_0fe6 busy-waits on timeGetTime
+// until 100 milliseconds have passed, whatever CM.INI says about the capture
+// frame delay.
+inline constexpr std::int64_t kWalkFrameMs = 100;
+
+// How many points of the path one frame carries the piece forward.
+//
+// The path holds every other pixel, so eight points is sixteen screen pixels
+// a frame and a square takes three or four frames. The INI dx and dy describe
+// how far the artwork's own feet move, three pixels a frame for R2-D2, and
+// pacing the walk by those numbers would take a piece a second and a half to
+// cross one square. The frames cycle instead, which is what a walk cycle is
+// for, and the piece keeps this steady pace whatever character it is.
+inline constexpr int kWalkPointsPerFrame = 8;
 
 // The bitmap the caller should draw and where to put it.
 struct WalkDraw {
     bool visible = false;
+    // The walk frame. Null while sliding, which means the caller draws the
+    // piece's ordinary sheet cell instead.
     const PieceBitmap* bitmap = nullptr;
-    int x = 0;  // the piece's anchor after this step, in screen pixels
+    int x = 0;  // the anchor the piece stands on, a point of the path
     int y = 0;
     int width = 0;
     int height = 0;
-    std::size_t stepIndex = 0;
+    std::size_t stepIndex = 0;   // which walk frame, counting from 0
+    std::size_t pointIndex = 0;  // which path point the piece stands on
+    // How far along the path the piece has come, 0 at the first point and
+    // 1 at the last. The caller mixes the two squares' depths with it.
+    double progress = 0.0;
 };
 
 struct WalkUpdate {
@@ -166,62 +195,81 @@ struct WalkUpdate {
     bool finished = false;
 };
 
-// Runs one WalkSequence against the same clock CapturePlayer uses.
+// Moves one piece along the screen line between two square centers.
 //
-// The caller hands every advance the current animation time in
-// milliseconds. Step i stands on the screen from i * frame_delay until the
-// next step replaces it, so a caller that advances once per display refresh
-// and a caller that advances every millisecond draw the same steps.
+// FUN_1008_148b projects both squares, runs LineDDA between the two centers,
+// and moves the piece to every second point the callback reports. With
+// walking on, each point belongs to a walk frame, the frames cycle through
+// the direction's sequence, and one frame stands on the screen for 100 ms.
+// With walking off the piece slides along the same line with no frames.
+//
+// The caller hands every advance the current animation time in milliseconds,
+// so a caller that advances once per display refresh and a caller that
+// advances every millisecond draw the same frames at the same points.
 class WalkPlayer {
 public:
     WalkPlayer() = default;
 
-    void setFit(WalkFit fit) { fit_ = fit; }
-    WalkFit fit() const { return fit_; }
+    // Walk `sequence` along `path`. The sequence must outlive the player.
+    // Passing null, or a sequence with no steps, slides instead. A path
+    // shorter than two points finishes at once.
+    void start(const WalkSequence* sequence, std::vector<PathPoint> path, std::int64_t nowMs);
 
-    // Walk `sequence` from (fromX, fromY) to (toX, toY), starting at wall
-    // time `nowMs`. The sequence must outlive the player. Passing null stops
-    // the player.
+    // The same, building the path between the two screen points.
     void start(const WalkSequence* sequence, int fromX, int fromY, int toX, int toY,
                std::int64_t nowMs);
 
-    // Move the clock to `nowMs` and report the step on screen. Time never
+    // Move the clock to `nowMs` and report the frame on screen. Time never
     // runs backwards here: a smaller `nowMs` than the last one leaves the
     // clock where it was.
     WalkUpdate advance(std::int64_t nowMs);
 
-    // End the walk now and put the piece on its last step.
+    // End the walk now and put the piece on the last point of the path.
     void skip();
 
     bool isFinished() const { return finished_; }
-    bool isRunning() const { return sequence_ != nullptr && !finished_; }
+    bool isRunning() const { return !path_.empty() && !finished_; }
+    bool isSliding() const { return sliding_; }
 
     std::int64_t elapsedMs() const { return elapsedMs_; }
-    // How long the whole walk runs: one frame delay per step.
+    // How long the whole walk runs, always a whole number of frames.
     std::int64_t durationMs() const { return durationMs_; }
 
     const WalkSequence* sequence() const { return sequence_; }
+    const std::vector<PathPoint>& path() const { return path_; }
 
-    // Where each step puts the piece, one entry per step.
+    // Where each frame puts the piece, one entry per frame of the walk.
     const std::vector<WalkDraw>& positions() const { return positions_; }
 
-    // How far the last step misses the target by. Zero on both axes under
-    // ScaleToTarget, and whatever the INI steps leave over under IniSteps.
-    int residualX() const { return residualX_; }
-    int residualY() const { return residualY_; }
-
 private:
-    WalkDraw drawAt(std::int64_t ms) const;
+    void build();
 
     const WalkSequence* sequence_ = nullptr;
-    WalkFit fit_ = WalkFit::IniSteps;
+    std::vector<PathPoint> path_;
     std::vector<WalkDraw> positions_;
+    bool sliding_ = false;
     std::int64_t startedMs_ = 0;
     std::int64_t elapsedMs_ = 0;
     std::int64_t durationMs_ = 0;
-    int residualX_ = 0;
-    int residualY_ = 0;
     bool finished_ = true;
 };
+
+// One pose of a piece turning in place.
+//
+// This is the other stepper, FUN_1068_1140. It leaves the piece on its square
+// and adds the INI dx and dy to that base position, one frame per 100 ms. The
+// walk between squares ignores those numbers and takes its positions from the
+// LineDDA path, so this helper is the only place they still move anything.
+struct TurnPose {
+    const PieceBitmap* bitmap = nullptr;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+// The poses a piece turns through, from the rotation sequence loadRotation
+// reads. `baseX` and `baseY` are the anchor it stands on.
+std::vector<TurnPose> turnInPlace(const WalkSequence& rotation, int baseX, int baseY);
 
 }  // namespace swchess::anim

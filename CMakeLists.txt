@@ -62,6 +62,15 @@ add_subdirectory(src/board)
 # The text module reads the language string tables and the two bitmap fonts.
 add_subdirectory(src/text)
 
+# The playable game. It needs the chess, board, anim, audio and text modules,
+# so it comes after all of them.
+add_subdirectory(src/game)
+
+# Two humans playing on the animated board.
+add_executable(swchess src/app/game_main.cpp)
+target_link_libraries(swchess PRIVATE swchess_game SDL3::SDL3)
+target_compile_options(swchess PRIVATE -Wall -Wextra)
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

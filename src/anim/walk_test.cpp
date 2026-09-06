@@ -24,10 +24,10 @@ void check(bool ok, const std::string& what) {
 }
 
 // Runs the player from the start to past the end in fixed steps and collects
-// the step index of every frame it draws, in the order it draws them.
+// the frame index of every picture it draws, in the order it draws them.
 std::vector<std::size_t> sweep(const swchess::anim::WalkSequence& walk, double stepMs) {
     swchess::anim::WalkPlayer player;
-    player.start(&walk, 0, 0, 0, 0, 0);
+    player.start(&walk, 0, 0, 240, 0, 0);
     std::vector<std::size_t> drawn;
     double now = 0.0;
     const std::int64_t limit = player.durationMs() + 500;
@@ -127,15 +127,17 @@ int main(int argc, char** argv) {
                 }
                 ++sequencesWithSteps;
 
-                // The player fires one frame per step at both sweep rates.
+                // The frame the player shows depends on the clock and not on
+                // how often the caller advances it.
                 const std::vector<std::size_t> fine = sweep(walk, 1.0);
                 const std::vector<std::size_t> coarse = sweep(walk, 1000.0 / 60.0);
-                check(fine.size() == walk.steps.size(),
-                      piece + " " + name + " draws one frame per step at 1 ms");
-                check(coarse.size() == walk.steps.size(),
-                      piece + " " + name + " draws one frame per step at 16.67 ms");
+                check(!fine.empty(), piece + " " + name + " draws at least one frame");
                 check(fine == coarse,
                       piece + " " + name + " draws the same frames at both sweep rates");
+                for (std::size_t f = 0; f + 1 < fine.size(); ++f) {
+                    check(fine[f] + 1 == fine[f + 1],
+                          piece + " " + name + " counts its frames up one at a time");
+                }
             }
 
             // North and south are mirror images in y only when their step
@@ -235,47 +237,119 @@ int main(int argc, char** argv) {
         check(atNorthEast.declaredCount == 0, "AT [NE] declares no steps");
         check(atNorthEast.steps.empty(), "AT [NE] plays nothing");
 
+        // The path is the straight screen line between the two square
+        // centers. LineDDA reports one pixel per step along the longer axis
+        // and LINEPROC keeps every other one.
+        const std::vector<swchess::anim::PathPoint> straight =
+            swchess::anim::linePoints(10, 10, 30, 14);
+        check(straight.size() == 21, "a 20 by 4 line reports 21 points");
+        check(straight.front() == (swchess::anim::PathPoint{10, 10}),
+              "the line starts on the first point");
+        check(straight.back() == (swchess::anim::PathPoint{30, 14}),
+              "the line ends on the last point");
+        const std::vector<swchess::anim::PathPoint> kept =
+            swchess::anim::walkPath(10, 10, 30, 14);
+        check(kept.size() == 11, "keeping every other point leaves 11 of the 21");
+        check(kept[1] == straight[2], "the second kept point is the third of the line");
+        check(kept.back() == straight.back(), "the last point is always kept");
+
+        // The direction table of the research note, read off the board deltas.
+        using swchess::anim::Direction;
+        using swchess::anim::walkDirection;
+        check(walkDirection(0, -1, false) == Direction::S, "moving down a rank walks south");
+        check(walkDirection(0, 1, false) == Direction::N, "moving up a rank walks north");
+        check(walkDirection(1, 0, false) == Direction::E, "moving up a file walks east");
+        check(walkDirection(-1, 0, false) == Direction::W, "moving down a file walks west");
+        check(walkDirection(-1, -1, false) == Direction::SW,
+              "moving down and left walks southwest");
+        check(walkDirection(1, 1, false) == Direction::NE, "moving up and right walks northeast");
+        check(walkDirection(1, 2, false) == Direction::NE, "a knight walks by the signs alone");
+        check(walkDirection(0, -1, true) == Direction::N, "a turned board reverses the direction");
+
         // The player, checked against AT walking south.
         swchess::anim::WalkSequence atSouth =
             swchess::anim::loadWalk(cdDir, "AT", swchess::anim::Direction::S);
+        check(atSouth.steps.size() == 16, "AT [S] holds 16 walk frames");
+
         swchess::anim::WalkPlayer player;
         player.start(&atSouth, 100, 50, 100, 114, 1000);
-        check(player.durationMs() == 16 * 120, "AT [S] runs 16 steps at 120 ms each");
+        check(!player.isSliding(), "a sequence with frames walks rather than slides");
+        check(player.path().size() == 33, "the 64 pixel walk keeps 33 of its 65 points");
         check(!player.isFinished(), "the player is running once it starts");
 
         swchess::anim::WalkUpdate first = player.advance(1000);
-        check(first.draw.visible, "the first step is on the screen at time zero");
-        check(first.draw.stepIndex == 0, "the first step is step zero");
-        check(first.draw.x == 100 && first.draw.y == 52,
-              "AT [S] step one puts the piece two pixels below the start");
+        check(first.draw.visible, "the first frame is on the screen at time zero");
+        check(first.draw.stepIndex == 0, "the first frame is frame zero");
+        check(first.draw.pointIndex == 0, "the first frame stands on the first point");
+        check(first.draw.x == 100 && first.draw.y == 50,
+              "the first frame stands on the square it left");
+        check(first.draw.bitmap == atSouth.steps.front().bitmap,
+              "the first frame draws the first bitmap of the sequence");
 
-        swchess::anim::WalkUpdate second = player.advance(1000 + 120);
-        check(second.draw.stepIndex == 1, "step two replaces step one at 120 ms");
+        // Every frame carries the piece the same number of points forward.
+        const int pace = swchess::anim::kWalkPointsPerFrame;
+        swchess::anim::WalkUpdate second = player.advance(1000 + 100);
+        check(second.draw.stepIndex == 1, "the next frame replaces the first at 100 ms");
+        check(second.draw.pointIndex == static_cast<std::size_t>(pace),
+              "the second frame stands one frame's worth of points along the path");
+        check(second.draw.y == player.path()[pace].y,
+              "the second frame stands on that point of the path");
 
         // Time never runs backwards, so an earlier call leaves the clock alone.
         swchess::anim::WalkUpdate back = player.advance(1000);
-        check(back.draw.stepIndex == 1, "an earlier time leaves the step where it was");
+        check(back.draw.stepIndex == 1, "an earlier time leaves the frame where it was");
 
         player.advance(1000 + player.durationMs());
-        check(player.isFinished(), "the player finishes after the last frame delay");
+        check(player.isFinished(), "the player finishes after the last frame");
+        check(player.positions().back().pointIndex + 1 == player.path().size(),
+              "the last frame stands on the last point of the path");
+        check(player.positions().back().x == 100 && player.positions().back().y == 114,
+              "the last frame stands on the square it walked to");
+        check(player.durationMs() ==
+                  static_cast<std::int64_t>(player.positions().size()) * 100,
+              "the walk runs 100 ms per frame");
 
-        // Under the INI steps the piece lands where the file puts it, which is
-        // 64 pixels down for AT walking south.
-        check(atSouth.totalDy == 64, "AT [S] sums 64 pixels of downward movement");
-        swchess::anim::WalkPlayer verbatim;
-        verbatim.start(&atSouth, 100, 50, 100, 200, 0);
-        check(verbatim.residualY() == 200 - (50 + 64),
-              "the INI steps leave AT [S] short of a 150 pixel target");
+        // Every frame moves the piece forward and none of them overshoots.
+        std::size_t previous = 0;
+        for (const swchess::anim::WalkDraw& draw : player.positions()) {
+            check(draw.pointIndex >= previous, "the walk never steps backwards");
+            check(draw.pointIndex < player.path().size(), "the walk stays on its path");
+            previous = draw.pointIndex;
+        }
 
-        // Scaling stretches the same shape onto the target.
-        swchess::anim::WalkPlayer scaledPlayer;
-        scaledPlayer.setFit(swchess::anim::WalkFit::ScaleToTarget);
-        scaledPlayer.start(&atSouth, 100, 50, 130, 200, 0);
-        check(scaledPlayer.residualX() == 0 && scaledPlayer.residualY() == 0,
-              "the scaled walk lands on the target exactly");
-        check(scaledPlayer.positions().back().x == 130 &&
-                  scaledPlayer.positions().back().y == 200,
-              "the last scaled step sits on the target");
+        // A knight jumps two squares by one axis and one by the other, and it
+        // walks the same straight line as everything else.
+        swchess::anim::WalkSequence chewie =
+            swchess::anim::loadWalk(cdDir, "CB", swchess::anim::Direction::NE);
+        swchess::anim::WalkPlayer knight;
+        knight.start(&chewie, 0, 0, 63, 126, 0);
+        check(knight.path().front() == (swchess::anim::PathPoint{0, 0}),
+              "the knight starts on its own square");
+        check(knight.path().back() == (swchess::anim::PathPoint{63, 126}),
+              "the knight ends on the square it jumps to");
+
+        // With walking off the piece slides along the same line and draws no
+        // frames, so the caller keeps drawing its ordinary sheet cell.
+        swchess::anim::WalkPlayer slide;
+        slide.start(nullptr, swchess::anim::walkPath(100, 50, 100, 114), 0);
+        check(slide.isSliding(), "no sequence means the piece slides");
+        check(slide.path().size() == 33, "the slide follows the same path as the walk");
+        check(slide.advance(0).draw.bitmap == nullptr, "a sliding piece draws no walk frame");
+        check(slide.advance(0).draw.visible, "a sliding piece is still on the screen");
+        slide.advance(slide.durationMs());
+        check(slide.isFinished(), "the slide finishes on its own duration");
+        check(slide.positions().back().x == 100 && slide.positions().back().y == 114,
+              "the slide ends on the target square");
+
+        // The rotation set is the one place the INI dx and dy still move a
+        // piece. It turns in place around the square it stands on.
+        swchess::anim::WalkSequence rotation = swchess::anim::loadRotation(cdDir, "AT");
+        const std::vector<swchess::anim::TurnPose> turn =
+            swchess::anim::turnInPlace(rotation, 300, 200);
+        check(turn.size() == rotation.steps.size(), "the turn holds one pose per rotation frame");
+        check(turn.front().x == 300 + rotation.steps.front().dx &&
+                  turn.front().y == 200 + rotation.steps.front().dy,
+              "a turning pose sits at the base plus the INI offsets");
 
         std::printf("the loader ignored the extra keys in %zu compass sections:\n", mismatches.size());
         for (const std::string& line : mismatches) {
