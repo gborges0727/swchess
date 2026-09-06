@@ -74,3 +74,57 @@ target_compile_options(swchess PRIVATE -Wall -Wextra)
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# The macOS application bundle. It builds the same sources as swchess and
+# wraps them in Star Wars Chess.app. The bundle carries no original game
+# files, so the launcher inside it asks for the CD folder on first run.
+if(APPLE)
+  set(SWCHESS_BUNDLE_NAME "Star Wars Chess")
+  set(SWCHESS_BUNDLE_ID "com.fairline.swchess")
+  set(SWCHESS_BUNDLE_VERSION "0.6.0")
+  set(SWCHESS_LAUNCHER_NAME "swchess-launcher")
+  set(SWCHESS_GAME_BINARY "${SWCHESS_BUNDLE_NAME}")
+  set(SWCHESS_ICON_NAME "StarWarsChess")
+  set(SWCHESS_SOURCE_DIR "${CMAKE_SOURCE_DIR}")
+
+  set(SWCHESS_ICNS "${CMAKE_BINARY_DIR}/${SWCHESS_ICON_NAME}.icns")
+  add_custom_command(
+    OUTPUT "${SWCHESS_ICNS}"
+    COMMAND "${CMAKE_SOURCE_DIR}/packaging/make-icns.sh"
+            "${CMAKE_SOURCE_DIR}/assets/ui/STLGO16.png"
+            "${SWCHESS_ICNS}"
+            "${CMAKE_BINARY_DIR}/icon-work"
+    DEPENDS "${CMAKE_SOURCE_DIR}/packaging/make-icns.sh"
+    COMMENT "Building the application icon"
+    VERBATIM)
+  set_source_files_properties("${SWCHESS_ICNS}" PROPERTIES
+    MACOSX_PACKAGE_LOCATION Resources
+    GENERATED TRUE)
+
+  configure_file("${CMAKE_SOURCE_DIR}/packaging/Info.plist.in"
+                 "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
+  configure_file("${CMAKE_SOURCE_DIR}/packaging/launcher.sh.in"
+                 "${CMAKE_BINARY_DIR}/${SWCHESS_LAUNCHER_NAME}" @ONLY)
+
+  add_executable(StarWarsChess MACOSX_BUNDLE src/app/game_main.cpp "${SWCHESS_ICNS}")
+  target_link_libraries(StarWarsChess PRIVATE swchess_game SDL3::SDL3)
+  target_compile_options(StarWarsChess PRIVATE -Wall -Wextra)
+  set_target_properties(StarWarsChess PROPERTIES
+    OUTPUT_NAME "${SWCHESS_BUNDLE_NAME}"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "@executable_path/../Frameworks")
+
+  set(SWCHESS_APP "$<TARGET_BUNDLE_DIR:StarWarsChess>")
+  add_custom_command(TARGET StarWarsChess POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${CMAKE_BINARY_DIR}/${SWCHESS_LAUNCHER_NAME}"
+            "${SWCHESS_APP}/Contents/MacOS/${SWCHESS_LAUNCHER_NAME}"
+    COMMAND chmod +x "${SWCHESS_APP}/Contents/MacOS/${SWCHESS_LAUNCHER_NAME}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DAPP_BINARY=${SWCHESS_APP}/Contents/MacOS/${SWCHESS_GAME_BINARY}"
+            "-DFRAMEWORKS_DIR=${SWCHESS_APP}/Contents/Frameworks"
+            -P "${CMAKE_SOURCE_DIR}/cmake/BundleDylibs.cmake"
+    COMMENT "Copying SDL3 into the bundle and fixing its load paths"
+    VERBATIM)
+endif()
