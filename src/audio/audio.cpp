@@ -267,6 +267,7 @@ void CueScheduler::reset() {
   nowMs_ = 0;
   fired_.clear();
   handles_.clear();
+  live_ = kNoClip;
 }
 
 void CueScheduler::advance(std::int64_t nowMs) {
@@ -275,7 +276,14 @@ void CueScheduler::advance(std::int64_t nowMs) {
     const Cue& cue = cues_[next_];
     ClipHandle handle = kNoClip;
     if (mixer_ != nullptr && cue.clip != nullptr) {
+      // sndPlaySound stops the sound that is playing before it starts the new
+      // one, so the previous cue goes quiet here rather than mixing on.
+      if (replacePrevious_ && live_ != kNoClip) {
+        mixer_->stop(live_);
+        live_ = kNoClip;
+      }
       handle = mixer_->play(*cue.clip, cue.channel, cue.volume, cue.loop);
+      live_ = handle;
     }
     fired_.push_back(next_);
     handles_.push_back(handle);

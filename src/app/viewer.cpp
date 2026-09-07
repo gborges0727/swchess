@@ -409,6 +409,8 @@ int runViewer(const Options& options) {
         }
     }
     swchess::audio::CueScheduler scheduler(&mixer, std::move(cues));
+    // One capture sound at a time, the way sndPlaySound plays them.
+    scheduler.setReplacePrevious(true);
 
     std::string backgroundName = options.background;
     swchess::Image background = swchess::loadBmp(backgroundPath(options.cdDir, backgroundName));

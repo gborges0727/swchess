@@ -159,6 +159,16 @@ class CueScheduler {
   void setCues(std::vector<Cue> cues);
   void setMixer(Mixer* mixer) { mixer_ = mixer; }
 
+  // Whether a cue cuts off the cue before it.
+  //
+  // The original starts every capture cue with sndPlaySound and never passes
+  // SND_NOSTOP, so the new sound stops whatever is still sounding and only one
+  // capture sound is ever audible. Turn this on to copy that. Off lets the
+  // cues overlap, which is what a scheduler driving several instruments at
+  // once wants.
+  void setReplacePrevious(bool on) { replacePrevious_ = on; }
+  bool replacePrevious() const { return replacePrevious_; }
+
   // Play every cue whose time has arrived and not yet played.
   void advance(std::int64_t nowMs);
 
@@ -195,6 +205,8 @@ class CueScheduler {
   std::vector<ClipHandle> handles_;
   std::size_t next_ = 0;
   std::int64_t nowMs_ = 0;
+  bool replacePrevious_ = false;
+  ClipHandle live_ = kNoClip;  // the voice the last cue started
 };
 
 }  // namespace swchess::audio
