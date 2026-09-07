@@ -18,6 +18,7 @@ import re
 from . import ne, png
 from .ini import IniFile, as_int
 from ..reference import anx
+from .cdfs import cd_path
 
 PIECES = ["AT", "BF", "C3", "CB", "DV", "EM", "LO", "LS", "R2", "SP", "ST", "YO"]
 
@@ -48,7 +49,7 @@ def extract(cd_dir, out_dir):
     mismatches = []
 
     for piece in PIECES:
-        dll_path = os.path.join(cd_dir, piece + ".DLL")
+        dll_path = cd_path(cd_dir, piece + ".DLL")
         blob, resources = ne.read_file(dll_path)
         bitmaps = [r for r in resources if r.type_id == ne.RT_BITMAP]
         folder = os.path.join(out_dir, piece)
@@ -87,7 +88,7 @@ def extract(cd_dir, out_dir):
             if parsed:
                 by_direction.setdefault(parsed["direction"], []).append(entry)
 
-        ini = IniFile(os.path.join(cd_dir, piece + ".INI"))
+        ini = IniFile(cd_path(cd_dir, piece + ".INI"))
         sequences = []
         for direction in DIRECTIONS:
             section = ini.section(direction)

@@ -13,7 +13,6 @@ decodes pose 0 but never draws it, shows every later pose frame_delay apart, and
 holds the last pose before erasing it.
 """
 
-import glob
 import hashlib
 import json
 import os
@@ -22,6 +21,7 @@ import re
 from . import cues, png
 from .ini import IniFile, as_int
 from ..reference import anx
+from .cdfs import cd_glob, cd_path
 
 # Every art= value ends in a three digit frame number, as in BF_C3003.BMP for
 # frame 3 of the BF_C3 sequence. The stem is greedy so the number stays three
@@ -184,11 +184,11 @@ def extract(cd_dir, out_dir, sound_index, frame_delay_default):
     blocking_captures = 0
     summary = []
 
-    for path in sorted(glob.glob(os.path.join(cd_dir, "*.ANX"))):
+    for path in cd_glob(cd_dir, ".ANX"):
         capture = os.path.splitext(os.path.basename(path))[0].upper()
         ini_name = ini_for(capture)
         if ini_name not in ini_cache:
-            ini_cache[ini_name] = IniFile(os.path.join(cd_dir, ini_name))
+            ini_cache[ini_name] = IniFile(cd_path(cd_dir, ini_name))
         ini = ini_cache[ini_name]
 
         with open(path, "rb") as fh:

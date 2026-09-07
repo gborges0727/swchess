@@ -17,6 +17,7 @@ import os
 
 from . import dib, png
 from .ini import IniFile
+from .cdfs import cd_path
 
 BACKGROUNDS = ["2DBDBTOP.BMP", "2DBDWTOP.BMP", "SPACE256.BMP", "THRON256.BMP"]
 
@@ -58,7 +59,7 @@ def _row_is_flat(bitmap, y, limit):
 def extract_sets(cd_dir, out_dir):
     """Write the four piece sheets plus their cells and return catalog data."""
     os.makedirs(out_dir, exist_ok=True)
-    cm = IniFile(os.path.join(cd_dir, "CM.INI"))
+    cm = IniFile(cd_path(cd_dir, "CM.INI"))
     chesssets = cm.section("chesssets")
     entries = []
 
@@ -68,7 +69,7 @@ def extract_sets(cd_dir, out_dir):
         cell_w = int(tokens[4]) if len(tokens) > 5 else None
         cell_h = int(tokens[5]) if len(tokens) > 5 else None
 
-        src = os.path.join(cd_dir, filename)
+        src = cd_path(cd_dir, filename)
         bitmap = dib.read_bmp_file(src)
         folder = os.path.join(out_dir, key.rstrip("_"))
         os.makedirs(folder, exist_ok=True)
@@ -166,7 +167,7 @@ def extract_backgrounds(cd_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     entries = []
     for filename in BACKGROUNDS:
-        src = os.path.join(cd_dir, filename)
+        src = cd_path(cd_dir, filename)
         bitmap = dib.read_bmp_file(src)
         name = os.path.splitext(filename)[0] + ".png"
         out = os.path.join(out_dir, name)

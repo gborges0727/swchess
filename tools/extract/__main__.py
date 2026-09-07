@@ -9,7 +9,6 @@ width times height pixels.
 """
 
 import argparse
-import glob
 import hashlib
 import json
 import os
@@ -18,6 +17,7 @@ import sys
 import time
 
 from . import VERSION, audio, captures, locales, ne, pieces, sheets, ui, verify
+from .cdfs import cd_exists, cd_glob, cd_path
 from .ini import IniFile, as_int
 from ..reference import anx
 
@@ -66,7 +66,7 @@ KNOWN_CUE_NOTES = [
     },
 ]
 
-SOURCE_GLOBS = ["*.ANX", "*.INI", "*.BMP", "*.WAV"]
+SOURCE_EXTENSIONS = [".ANX", ".INI", ".BMP", ".WAV"]
 SOURCE_FILES = [
     "AT.DLL", "BF.DLL", "C3.DLL", "CB.DLL", "DV.DLL", "EM.DLL",
     "LO.DLL", "LS.DLL", "R2.DLL", "SP.DLL", "ST.DLL", "YO.DLL",
@@ -78,14 +78,14 @@ SOURCE_FILES = [
 def hash_sources(cd_dir):
     """Hash every original file the extractor reads."""
     names = set(SOURCE_FILES)
-    for pattern in SOURCE_GLOBS:
-        for path in glob.glob(os.path.join(cd_dir, pattern)):
-            names.add(os.path.basename(path))
+    for extension in SOURCE_EXTENSIONS:
+        for path in cd_glob(cd_dir, extension):
+            names.add(os.path.basename(path).upper())
     out = {}
     for name in sorted(names):
-        path = os.path.join(cd_dir, name)
-        if not os.path.exists(path):
+        if not cd_exists(cd_dir, name):
             continue
+        path = cd_path(cd_dir, name)
         with open(path, "rb") as fh:
             data = fh.read()
         out[name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
@@ -97,7 +97,7 @@ def run_extract(cd_dir, out_dir):
     started = time.time()
     os.makedirs(out_dir, exist_ok=True)
 
-    cm = IniFile(os.path.join(cd_dir, "CM.INI"))
+    cm = IniFile(cd_path(cd_dir, "CM.INI"))
     defaults = cm.section("defaults")
     frame_delay = as_int(defaults.get("frame_delay"), 120) if defaults else 120
 
@@ -210,7 +210,7 @@ def run_extract(cd_dir, out_dir):
 def run_selftest(cd_dir, seed=None):
     """Decode five ANX records and five piece bitmaps again and check them."""
     rng = random.Random(seed)
-    anx_paths = sorted(glob.glob(os.path.join(cd_dir, "*.ANX")))
+    anx_paths = cd_glob(cd_dir, ".ANX")
     if not anx_paths:
         print(f"no ANX files under {cd_dir}", file=sys.stderr)
         return 1
@@ -234,7 +234,7 @@ def run_selftest(cd_dir, seed=None):
     print("checking five piece bitmaps")
     for _ in range(5):
         piece = rng.choice(pieces.PIECES)
-        blob, resources = ne.read_file(os.path.join(cd_dir, piece + ".DLL"))
+        blob, resources = ne.read_file(cd_path(cd_dir, piece + ".DLL"))
         bitmaps = [r for r in resources if r.type_id == ne.RT_BITMAP]
         res = rng.choice(bitmaps)
         rec = anx.decode_record(blob, res.offset, res.offset + res.length)
@@ -258,7 +258,7 @@ def run_alpha_check(cd_dir, out_dir, samples=5, seed=None):
     """Read written sprite PNGs back and confirm alpha 0 tracks palette index 0."""
     rng = random.Random(seed)
     failures = 0
-    anx_paths = sorted(glob.glob(os.path.join(cd_dir, "*.ANX")))
+    anx_paths = cd_glob(cd_dir, ".ANX")
     for _ in range(samples):
         path = rng.choice(anx_paths)
         capture = os.path.splitext(os.path.basename(path))[0].upper()
@@ -270,7 +270,7 @@ def run_alpha_check(cd_dir, out_dir, samples=5, seed=None):
         print(f"  {'ok ' if ok else 'BAD'} {capture}/rec{off:08x}.png {message}")
     for _ in range(samples):
         piece = rng.choice(pieces.PIECES)
-        blob, resources = ne.read_file(os.path.join(cd_dir, piece + ".DLL"))
+        blob, resources = ne.read_file(cd_path(cd_dir, piece + ".DLL"))
         bitmaps = [r for r in resources if r.type_id == ne.RT_BITMAP]
         res = rng.choice(bitmaps)
         rec = anx.decode_record(blob, res.offset, res.offset + res.length)

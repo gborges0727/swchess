@@ -17,6 +17,7 @@ import json
 import os
 
 from . import ne
+from .cdfs import cd_path
 
 LANGUAGES = {
     "RESENG.DLL": "english",
@@ -55,7 +56,7 @@ def extract(cd_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     files = []
     for filename, language in LANGUAGES.items():
-        path = os.path.join(cd_dir, filename)
+        path = cd_path(cd_dir, filename)
         blob, resources = ne.read_file(path)
         tables = []
         string_count = 0

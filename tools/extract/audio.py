@@ -12,6 +12,7 @@ import shutil
 import struct
 
 from . import ne
+from .cdfs import cd_path
 
 STANDALONE = ["BLKVIC.WAV", "STWPRES.WAV", "SWTHEME.WAV", "WHTVIC.WAV"]
 
@@ -64,7 +65,7 @@ def duration_ms(entry):
 def extract(cd_dir, out_dir):
     """Write every sound into out_dir and return the catalog entries."""
     os.makedirs(out_dir, exist_ok=True)
-    dll_path = os.path.join(cd_dir, "SWCAUDIO.DLL")
+    dll_path = cd_path(cd_dir, "SWCAUDIO.DLL")
     blob, resources = ne.read_file(dll_path)
     waves = [r for r in resources if r.type_id == "WAVE"]
 
@@ -104,7 +105,7 @@ def extract(cd_dir, out_dir):
 
     standalone = []
     for name in STANDALONE:
-        src = os.path.join(cd_dir, name)
+        src = cd_path(cd_dir, name)
         shutil.copyfile(src, os.path.join(out_dir, name))
         with open(src, "rb") as fh:
             data = fh.read()

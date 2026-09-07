@@ -10,12 +10,13 @@ import json
 import os
 
 from . import dib, ne, png
+from .cdfs import cd_path
 
 
 def extract(cd_dir, out_dir):
     """Write every TITLERES bitmap as an opaque PNG and return catalog data."""
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(cd_dir, "TITLERES.DLL")
+    path = cd_path(cd_dir, "TITLERES.DLL")
     blob, resources = ne.read_file(path)
     entries = []
     for res in resources:
