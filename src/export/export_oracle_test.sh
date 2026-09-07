@@ -4,11 +4,14 @@
 #   export_oracle_test.sh <swchess-extract> <cd dir> <assets dir> <scratch dir>
 #
 # It extracts the CD again into the scratch directory and compares every file
-# with the existing cache. Two differences are expected and allowed. The
-# interpolation lane writes interp60 and walk60 folders that the extractor
-# never produces, and catalog.json records the moment of the run and the
-# output directory, which differ by definition. Everything else has to match
-# byte for byte.
+# it produced with the file of the same name in the existing cache. The cache
+# also holds interp60 and walk60 folders that the interpolation lane writes,
+# and those have no counterpart in a fresh extraction, so the comparison runs
+# from the fresh side outward rather than both ways.
+#
+# catalog.json is the one file allowed to differ, and only in the two fields
+# that record the run itself: the second it started and the directory it wrote
+# to.
 set -uo pipefail
 
 if [ $# -ne 4 ]; then
@@ -21,7 +24,7 @@ cd_dir="$2"
 assets="$3"
 scratch="$4"
 
-rm -rf "$scratch"
+rm -rf "$scratch" "$scratch.log"
 mkdir -p "$(dirname "$scratch")"
 
 if ! "$extract" --cd "$cd_dir" --out "$scratch" > "$scratch.log" 2>&1; then
@@ -30,19 +33,33 @@ if ! "$extract" --cd "$cd_dir" --out "$scratch" > "$scratch.log" 2>&1; then
   exit 1
 fi
 
-# Every file except catalog.json must be identical. The two folders the
-# interpolation lane writes have no counterpart in a fresh extraction.
-differences=$(diff -rq "$assets" "$scratch" 2>&1 \
-  | grep -v '/interp60' \
-  | grep -v '/walk60' \
-  | grep -v 'catalog\.json')
+missing=0
+differ=0
+same=0
+first=''
+while IFS= read -r file; do
+  relative="${file#"$scratch"/}"
+  if [ "$relative" = 'catalog.json' ]; then
+    continue
+  fi
+  if [ ! -f "$assets/$relative" ]; then
+    missing=$((missing + 1))
+    [ -z "$first" ] && first="$relative is not in the Python cache"
+    continue
+  fi
+  if cmp -s "$file" "$assets/$relative"; then
+    same=$((same + 1))
+  else
+    differ=$((differ + 1))
+    [ -z "$first" ] && first="$relative differs"
+  fi
+done < <(find "$scratch" -type f)
 
-if [ -n "$differences" ]; then
-  echo "FAIL the two caches differ"
-  echo "$differences" | head -40
+if [ $missing -ne 0 ] || [ $differ -ne 0 ]; then
+  echo "FAIL $differ files differ and $missing are not in the Python cache, first: $first"
   exit 1
 fi
-echo "ok   every extracted file matches the Python cache byte for byte"
+echo "ok   all $same extracted files match the Python cache byte for byte"
 
 # catalog.json is compared with the two fields that record the run itself
 # blanked out.
