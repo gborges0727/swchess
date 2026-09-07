@@ -1,49 +1,30 @@
 #!/bin/sh
 # Builds the application icon at build time.
 #
-#   packaging/make-icns.sh <source.png or ""> <out.icns> <work directory>
+#   packaging/make-icns.sh <ignored> <out.icns> <work directory>
 #
-# The source is assets/ui/STLGO16.png, which tools/extract writes from the
-# original CD. That file is not in the repository, so this script draws a
-# plain blue square instead whenever the source is missing. Nothing generated
-# from the original artwork is ever committed.
+# The picture comes from packaging/icon.png, which this repository owns.
+# packaging/make-icon-png.py draws it. The first argument is ignored. It used
+# to name a picture decoded from the game CD, and the release must not carry
+# anything from the CD. CMake still passes that argument.
 set -eu
 
-source_png=${1:-}
 out_icns=$2
 work_dir=$3
+
+here=$(cd "$(dirname "$0")" && pwd)
+source_png="$here/icon.png"
+
+if [ ! -f "$source_png" ]; then
+    echo "the icon is missing from $source_png" >&2
+    echo "run: python3 packaging/make-icon-png.py packaging/icon.png" >&2
+    exit 1
+fi
 
 rm -rf "$work_dir"
 mkdir -p "$work_dir"
 square="$work_dir/square.png"
-
-if [ -n "$source_png" ] && [ -f "$source_png" ]; then
-    # sips keeps the aspect ratio, so pad the logo onto a 1024 by 1024 canvas.
-    sips -s format png "$source_png" --out "$square" >/dev/null
-    sips -Z 1024 "$square" >/dev/null
-    sips -p 1024 1024 "$square" >/dev/null
-else
-    python3 - "$square" <<'PY'
-import struct, sys, zlib
-
-size = 1024
-red, green, blue = 0x1b, 0x63, 0x73
-row = bytes([0]) + bytes([red, green, blue]) * size
-raw = row * size
-
-
-def chunk(tag, body):
-    head = tag + body
-    return struct.pack(">I", len(body)) + head + struct.pack(">I", zlib.crc32(head))
-
-
-png = b"\x89PNG\r\n\x1a\n"
-png += chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
-png += chunk(b"IDAT", zlib.compress(raw, 9))
-png += chunk(b"IEND", b"")
-open(sys.argv[1], "wb").write(png)
-PY
-fi
+sips -s format png "$source_png" --out "$square" >/dev/null
 
 iconset="$work_dir/icon.iconset"
 mkdir -p "$iconset"
