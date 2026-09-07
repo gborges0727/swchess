@@ -5,7 +5,7 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>@SWCHESS_LAUNCHER_NAME@</string>
+  <string>@SWCHESS_GAME_BINARY@</string>
   <key>CFBundleIdentifier</key>
   <string>@SWCHESS_BUNDLE_ID@</string>
   <key>CFBundleInfoDictionaryVersion</key>
