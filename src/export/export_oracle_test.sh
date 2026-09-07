@@ -61,11 +61,12 @@ if [ $missing -ne 0 ] || [ $differ -ne 0 ]; then
 fi
 echo "ok   all $same extracted files match the Python cache byte for byte"
 
-# catalog.json is compared with the two fields that record the run itself
+# catalog.json is compared with the three fields that record the run itself
 # blanked out.
 blank() {
   sed -e 's/"generated_unix_time": [0-9]*/"generated_unix_time": 0/' \
-      -e 's#"output_directory": "[^"]*"#"output_directory": ""#' "$1"
+      -e 's#"output_directory": "[^"]*"#"output_directory": ""#' \
+      -e 's#"cd_directory": "[^"]*"#"cd_directory": ""#' "$1"
 }
 
 if ! diff <(blank "$assets/catalog.json") <(blank "$scratch/catalog.json") > "$scratch.catalog"; then

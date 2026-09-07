@@ -386,11 +386,18 @@ int main(int argc, char** argv) {
                 std::filesystem::create_directories(stale);
                 // Only the manifest is copied and edited. The frames it names
                 // are hard linked, because loadInterp reads every one of them.
+                // A link fails across two disks, and then the frame is copied.
                 for (const std::filesystem::directory_entry& entry :
                      std::filesystem::directory_iterator(assetsDir + "/captures/BBWB/interp60")) {
                     if (entry.path().extension() == ".png") {
+                        std::error_code linkError;
                         std::filesystem::create_hard_link(entry.path(),
-                                                          stale / entry.path().filename());
+                                                          stale / entry.path().filename(),
+                                                          linkError);
+                        if (linkError) {
+                            std::filesystem::copy_file(entry.path(),
+                                                       stale / entry.path().filename());
+                        }
                     }
                 }
                 // Move the first cue of the first sound event to 999999 ms.
