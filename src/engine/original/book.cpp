@@ -161,6 +161,14 @@ void Book::buildIndex() {
     }
 }
 
+bool Book::reaches(const chess::Position& position, int plyLimit) const {
+    // How many half moves the game has run, counting from the standard start.
+    const int ply = (position.fullmoveNumber() - 1) * 2 +
+                    (position.sideToMove() == chess::Color::Black ? 1 : 0);
+    if (plyLimit > 0 && ply >= plyLimit) return false;
+    return index_.count(position.repetitionKey()) != 0;
+}
+
 std::vector<chess::Move> Book::probe(const chess::Position& position) const {
     std::vector<chess::Move> out;
     const auto found = index_.find(position.repetitionKey());

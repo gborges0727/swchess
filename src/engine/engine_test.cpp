@@ -38,6 +38,13 @@ std::string cdDir;
 
 std::string cdFile(const std::string& name) { return cdDir + "/" + name; }
 
+// The settings EXPERT.CMP works out to. The search tests use them because
+// that level throws no moves away, so its search repeats exactly.
+swchess::engine::original::Weights expertWeights() {
+    return swchess::engine::original::weightsFor(
+        Personality::load(cdFile("EXPERT.CMP")));
+}
+
 bool isLegal(const Position& position, Move move) {
     for (const Move& m : position.legalMoves()) {
         if (m == move) return true;
@@ -162,27 +169,62 @@ void testPersonalities() {
         {Level::Hard, "HARD.CMP", "Kamikaze", 35, 60, 0, 100, 1},
         {Level::Expert, "EXPERT.CMP", "Chessmaster", 35, 60, 100, 100, 1},
     };
+    // What each level's fields work out to once converted.
+    const int wantSkip[] = {60, 40, 30, 0, 0};
+    const int wantBookPlies[] = {6, 12, 24, 70, 70};
+    int which = 0;
     for (const Expected& want : expected) {
         check(std::string(swchess::engine::levelFileName(want.level)) == want.fileName,
               std::string("the level names ") + want.fileName);
         const Personality got = Personality::load(cdFile(want.fileName));
         const std::string where = std::string(want.fileName) + " ";
-        check(got.name == want.name, where + "holds the name " + want.name);
-        check(got.echoName == want.name, where + "repeats the name at 0x44");
-        check(got.signature == 0x201a, where + "carries the 0x201A signature");
-        check(got.contempt == 2, where + "holds 2 at offset 0x3A");
-        check(got.searchDepth == want.searchDepth, where + "sets the search depth");
-        check(got.secondsPerMove == want.secondsPerMove, where + "sets the seconds per move");
-        check(got.bookBreadth == want.bookBreadth, where + "sets the book breadth");
-        check(got.aggression == want.aggression, where + "sets the aggression");
-        check(got.flagA == 2, where + "holds 2 at offset 0x64");
-        check(got.flagB == want.flagB, where + "sets the flag at offset 0x65");
-        check(got.primary.randomness == 10, where + "sets the randomness weight to 10");
-        // Only HARD.CMP holds two different weight blocks.
-        const bool same = got.primary == got.secondary;
+        check(got.title == want.name, where + "holds the title " + want.name);
+        check(got.name == want.name, where + "repeats the name at 0x44");
+        check(got.magic == 0x201a, where + "carries the 0x201A magic");
+        check(got.contempt == 2, where + "scores a draw at nothing");
+        check(got.bookMoves == want.searchDepth, where + "sets the book depth");
+        check(got.accuracy == want.secondsPerMove, where + "sets the search accuracy");
+        check(got.pieceVersusPawn == want.bookBreadth, where + "sets piece against pawn");
+        check(got.materialWeight == want.aggression, where + "sets the material weight");
+        check(got.playerType == 2, where + "says the computer plays it");
+        check(got.ponder == want.flagB, where + "sets the ponder flag");
+        check(got.own.centerPawn == 10, where + "holds 10 for the centre pawn");
+        check(got.skipPercent() == wantSkip[which], where + "drops the right share of moves");
+        check(got.bookPlies() == wantBookPlies[which], where + "allows the right book depth");
+        ++which;
+        // Only HARD.CMP holds two different piece value blocks.
+        const bool same = got.own == got.opponent;
         check(want.level == Level::Hard ? !same : same,
-              where + "matches its two weight blocks");
+              where + "matches its two piece value blocks");
     }
+
+    // Every level thinks on the same clock, and it comes from CMWIN.DAT.
+    const swchess::engine::original::TimeControl control =
+        swchess::engine::original::TimeControl::load(cdFile("CMWIN.DAT"));
+    check(control.mode == 501, "CMWIN.DAT asks for a fixed number of seconds a move");
+    check(control.secondsPerMove == 5, "CMWIN.DAT gives the engine five seconds a move");
+    check(control.fixedDepth == 4, "CMWIN.DAT holds four plies for its other mode");
+
+    // Kamikaze is the level that values the other side's pieces above its own,
+    // which is how it comes to give material away.
+    const Personality kamikaze = Personality::load(cdFile("HARD.CMP"));
+    const auto hard = swchess::engine::original::weightsFor(kamikaze);
+    const int q = static_cast<int>(swchess::chess::PieceType::Queen);
+    const int pawn = static_cast<int>(swchess::chess::PieceType::Pawn);
+    check(hard.opponentPiece[q] > hard.enginePiece[q],
+          "Kamikaze rates the enemy queen above its own");
+    check(hard.opponentPiece[pawn] > hard.enginePiece[pawn],
+          "Kamikaze rates the enemy pawn above its own");
+
+    // Expert runs the engine's own factory values untouched.
+    const Personality master = Personality::load(cdFile("EXPERT.CMP"));
+    const auto expert = swchess::engine::original::weightsFor(master);
+    check(expert.enginePiece == expert.opponentPiece,
+          "Chessmaster rates both sides the same");
+    check(expert.enginePiece[pawn] == 256, "Chessmaster keeps the factory pawn at 256");
+    check(expert.enginePiece[q] == 2368, "Chessmaster keeps the factory queen at 2368");
+    check(expert.skipPercent == 0, "Chessmaster searches every move");
+    check(expert.drawScore == 0, "Chessmaster scores a draw at nothing");
 
     bool threw = false;
     try {
@@ -293,12 +335,7 @@ void testBook() {
 void testSearchFindsMateInOne() {
     // Black's king sits on g8 behind its own pawns, so Ra8 is mate.
     const Position position = *Position::fromFen("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1");
-    swchess::engine::original::StyleWeights style;
-    style.attack = 100;
-    style.defense = 100;
-    style.material = 25;
-    style.mobility = 20;
-    swchess::engine::original::Searcher searcher(style);
+    swchess::engine::original::Searcher searcher(expertWeights());
     swchess::engine::original::SearchLimits limits;
     limits.maxDepth = 3;
     limits.maxTime = std::chrono::milliseconds(5000);
@@ -315,16 +352,15 @@ void testSearchDepthChangesThePlay() {
     // deeper cap has to reach a deeper iteration and change the move.
     const Position position = *Position::fromFen(
         "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - 0 1");
-    swchess::engine::original::StyleWeights style{10, 90, 50, 30, 30, 10};
     std::atomic<bool> stop{false};
 
-    swchess::engine::original::Searcher shallow(style);
+    swchess::engine::original::Searcher shallow(expertWeights());
     const auto atOne =
         shallow.run(position, {1, std::chrono::milliseconds(20000)}, stop);
     check(atOne.depth == 1, "a cap of one ply reaches one ply");
     check(position.san(atOne.move) == "Qc4+", "one ply grabs the check");
 
-    swchess::engine::original::Searcher deeper(style);
+    swchess::engine::original::Searcher deeper(expertWeights());
     const auto atThree =
         deeper.run(position, {3, std::chrono::milliseconds(20000)}, stop);
     check(atThree.depth == 3, "a cap of three plies reaches three plies");
@@ -334,9 +370,7 @@ void testSearchDepthChangesThePlay() {
 
 void testSearchStops() {
     const Position position = Position::start();
-    swchess::engine::original::StyleWeights style;
-    style.material = 25;
-    swchess::engine::original::Searcher searcher(style);
+    swchess::engine::original::Searcher searcher(expertWeights());
     swchess::engine::original::SearchLimits limits;
     limits.maxDepth = 30;
     limits.maxTime = std::chrono::milliseconds(150);
@@ -384,9 +418,9 @@ void testOriginalEngineAnswersInBudget() {
 }
 
 void testOriginalEngineHonoursTheBudget() {
-    // NEWCOMER.CMP asks for depth 3 and holds 0 in its seconds-per-move
-    // field, so the port gives that level a one second budget. From a
-    // position the book never reaches, the answer must land inside it.
+    // No .CMP file carries a clock. Every level thinks for the five seconds
+    // CMWIN.DAT gives it. From a position the book never reaches, the answer
+    // must land inside that.
     swchess::engine::Config config;
     config.cdDir = cdDir;
     config.level = Level::Newcomer;
@@ -400,9 +434,10 @@ void testOriginalEngineHonoursTheBudget() {
         answer = m;
         got = true;
     });
-    const long took = waitForAnswer(*engine, got, 5000);
+    const long took = waitForAnswer(*engine, got, 12000);
     check(took >= 0, "the engine answers off the book");
-    check(took < 2500, "the engine answers inside the Newcomer budget");
+    check(took >= 4000, "the engine uses the five seconds CMWIN.DAT gives it");
+    check(took < 8000, "the engine answers inside the CMWIN.DAT budget");
     check(isLegal(position, answer), "the off-book answer is legal");
 }
 
@@ -428,6 +463,10 @@ void testOriginalEngineEveryMoveIsLegal() {
                                 answer = m;
                                 got = true;
                             });
+        // Every level thinks for five seconds, so the test presses FORCE
+        // rather than sit through twenty of them.
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        engine->forceMove();
         const long took = waitForAnswer(*engine, got, 8000);
         if (took < 0) {
             check(false, "the engine answers every request in the game");

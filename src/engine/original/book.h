@@ -48,6 +48,10 @@ public:
     using BookLineList = std::vector<BookLine>;
     const BookLineList& lines() const { return lines_; }
 
+    // Whether the book still covers this position at all. `plyLimit` is how
+    // many plies of book the level allows, which comes from the .CMP file.
+    bool reaches(const chess::Position& position, int plyLimit) const;
+
     // The moves the book plays in this position, most played first. Empty
     // when the position is off the book.
     std::vector<chess::Move> probe(const chess::Position& position) const;

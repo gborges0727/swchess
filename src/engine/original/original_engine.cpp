@@ -27,10 +27,11 @@ namespace {
 
 using original::Book;
 using original::Personality;
-using original::StyleWeights;
 using original::SearchLimits;
 using original::Searcher;
 using original::SearchResult;
+using original::TimeControl;
+using original::Weights;
 
 std::string join(const std::string& dir, const std::string& file) {
     if (dir.empty()) return file;
@@ -38,16 +39,21 @@ std::string join(const std::string& dir, const std::string& file) {
     return dir + "/" + file;
 }
 
-// Turns the settings in a .CMP file into the depth and the clock the search
-// runs against. secondsPerMove is zero on NEWCOMER.CMP, which is the level
-// the original runs in its own shallow "newcomer mode" instead of on a clock,
-// so that level gets a short fixed budget here.
-SearchLimits limitsFor(const Personality& personality) {
+// The clock and the depth the search runs against. No .CMP file carries
+// either one. They come from CMWIN.DAT, so every level thinks for the same
+// five seconds and none of them caps its depth. What separates the levels is
+// how many moves the engine throws away unsearched and what it thinks its
+// pieces are worth.
+SearchLimits limitsFor(const TimeControl& control) {
     SearchLimits limits;
-    limits.maxDepth = personality.searchDepth > 0 ? personality.searchDepth
-                                                  : original::kPlyMax - 2;
-    const int seconds = personality.secondsPerMove;
-    limits.maxTime = std::chrono::milliseconds(seconds > 0 ? seconds * 1000 : 1000);
+    if (control.mode == TimeControl::kFixedDepth && control.fixedDepth > 0) {
+        limits.maxDepth = control.fixedDepth;
+        limits.maxTime = std::chrono::hours(1);
+        return limits;
+    }
+    limits.maxDepth = original::kMaxIteration;
+    limits.maxTime =
+        std::chrono::milliseconds(std::max<int>(control.secondsPerMove, 1) * 1000);
     return limits;
 }
 
@@ -57,7 +63,9 @@ public:
         : cdDir_(config.cdDir),
           level_(config.level),
           book_(Book::load(join(config.cdDir, "BOOK.DAT"))),
+          control_(TimeControl::load(join(config.cdDir, "CMWIN.DAT"))),
           personality_(Personality::load(join(config.cdDir, levelFileName(config.level)))) {
+        weights_ = original::weightsFor(personality_);
         worker_ = std::thread([this] { workerLoop(); });
     }
 
@@ -92,9 +100,11 @@ public:
 
     void setLevel(Level level) override {
         Personality loaded = Personality::load(join(cdDir_, levelFileName(level)));
+        Weights weights = original::weightsFor(loaded);
         std::lock_guard<std::mutex> lock(mutex_);
         level_ = level;
         personality_ = std::move(loaded);
+        weights_ = weights;
     }
 
     Level level() const override {
@@ -149,7 +159,7 @@ private:
     void workerLoop() {
         while (true) {
             chess::Position position;
-            Personality personality;
+            Weights weights;
             bool asHint = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
@@ -157,7 +167,7 @@ private:
                 if (quitting_) return;
                 hasJob_ = false;
                 position = pending_;
-                personality = personality_;
+                weights = weights_;
                 asHint = asHint_;
                 stop_.store(forced_, std::memory_order_relaxed);
             }
@@ -167,15 +177,17 @@ private:
             // its openings. A hint takes the most played line instead, so
             // asking twice gives the same answer.
             std::optional<chess::Move> chosen;
-            if (asHint) {
-                const std::vector<chess::Move> fromBook = book_.probe(position);
-                if (!fromBook.empty()) chosen = fromBook.front();
-            } else {
-                chosen = book_.pick(position, bookRandom_);
+            if (book_.reaches(position, weights.bookPlies)) {
+                if (asHint) {
+                    const std::vector<chess::Move> fromBook = book_.probe(position);
+                    if (!fromBook.empty()) chosen = fromBook.front();
+                } else {
+                    chosen = book_.pick(position, bookRandom_);
+                }
             }
             if (!chosen) {
-                searcher_.setStyle(personality.primary);
-                const SearchResult found = searcher_.run(position, limitsFor(personality), stop_);
+                searcher_.setWeights(weights);
+                const SearchResult found = searcher_.run(position, limitsFor(control_), stop_);
                 if (found.hasMove) chosen = found.move;
             }
 
@@ -201,9 +213,11 @@ private:
 
     Level level_;
     Book book_;
+    TimeControl control_;
     Personality personality_;
+    Weights weights_;
     // The worker thread owns this. Nothing else touches it.
-    Searcher searcher_{StyleWeights{}};
+    Searcher searcher_{Weights{}};
     std::uint32_t bookRandom_{0x1993u};
 
     bool hasJob_{false};
