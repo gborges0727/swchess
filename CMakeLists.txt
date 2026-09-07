@@ -119,6 +119,14 @@ if(APPLE)
   set(SWCHESS_BUNDLE_VERSION "0.6.0")
   set(SWCHESS_GAME_BINARY "${SWCHESS_BUNDLE_NAME}")
   set(SWCHESS_ICON_NAME "StarWarsChess")
+  # The oldest macOS the bundle claims to run on. scripts/build-app.sh passes
+  # the version it was given as CMAKE_OSX_DEPLOYMENT_TARGET, and Finder reads
+  # the same number out of Info.plist.
+  if(CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(SWCHESS_MIN_MACOS "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  else()
+    set(SWCHESS_MIN_MACOS "11.0")
+  endif()
 
   set(SWCHESS_ICNS "${CMAKE_BINARY_DIR}/${SWCHESS_ICON_NAME}.icns")
   add_custom_command(

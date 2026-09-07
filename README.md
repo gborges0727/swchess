@@ -8,7 +8,8 @@ play the capture animations interpolated to 60 frames per second.
 
 ## What you need
 
-- A Mac with Apple silicon running macOS 15 or later.
+- A Mac running macOS 11 or later. The release build carries both Apple
+  silicon and Intel code.
 - [Homebrew](https://brew.sh), then `brew bundle` in this directory to install
   cmake, ninja, sdl3 and nlohmann-json.
 - Python 3, which the asset extractor and the interpolation tool both use.
@@ -31,6 +32,20 @@ ctest --test-dir build --output-on-failure
 ./build/swchess --cd original/win3x/cd --assets assets
 ```
 
+`--cd` and `--assets` are optional when the game opens a window. Without them
+it reads `SWCHESS_CD` and `SWCHESS_ASSETS`, then the file it keeps at
+`~/Library/Application Support/Star Wars Chess/startup.conf`, and then it asks
+for the CD folder in a Finder chooser and remembers the answer. A folder that
+does not hold `XCHESS.EXE`, `CC256.DLL` and `CMWIN.DAT` gets a message saying
+which file is missing, and the chooser opens again. The decoded artwork goes
+to `~/Library/Application Support/Star Wars Chess/assets` when nothing names
+another folder, and a run with no decoded artwork plays the original 120 ms
+capture poses.
+
+A `--script` or `--dump-at` run draws into a file and opens no window, so it
+opens no chooser either. Those runs need `--cd` or `SWCHESS_CD` and stop with
+a message when they have neither.
+
 These keys work while the game runs, and any key or click skips a capture.
 
 | Key | What it does |
@@ -50,6 +65,11 @@ Build the double-clickable application with the packaging script. It writes
 ```sh
 ./scripts/build-app.sh
 ```
+
+The bundle holds no game data. The first time someone opens it, the game asks
+for their CD folder and writes the answer to
+`~/Library/Application Support/Star Wars Chess/startup.conf`. Later launches
+read that file and start straight away.
 
 ## Release
 
@@ -167,7 +187,7 @@ without a separate build tree.
 | `cmake/` | Helper modules the top-level `CMakeLists.txt` includes |
 | `docs/` | The plan and the research notes |
 | `original/` | Where your copy of the CD files goes |
-| `packaging/` | The `Info.plist`, launcher and icon script for the app bundle |
+| `packaging/` | The `Info.plist`, the icon script and the release file lists |
 | `scripts/` | The bundle build and the fresh checkout check |
 | `src/` | The C++20 game, in the modules below |
 | `tests/` | Oracle tests that compare the C++ decoders against the Python ones |

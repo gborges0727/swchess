@@ -9,7 +9,6 @@
 Contents/Info.plist
 Contents/PkgInfo
 Contents/MacOS/Star Wars Chess
-Contents/MacOS/swchess-launcher
 Contents/MacOS/swchess-viewer
 Contents/MacOS/swchess-extract
 Contents/MacOS/swchess-interpolate

@@ -4,8 +4,9 @@
 #   ./scripts/check-fresh-checkout.sh
 #
 # It clones this repository's HEAD into a temporary directory, installs the
-# Brewfile, builds the application bundle there, runs the test suite, and
-# plays two moves headless to write a picture. It exits non-zero on the first
+# Brewfile, builds the application bundle there, runs the test suite, plays
+# two moves headless to write a picture, and checks that the game finds its
+# CD folder the way a player's copy does. It exits non-zero on the first
 # failure.
 #
 # The clone holds no original CD files and no extracted artwork, because
@@ -76,5 +77,39 @@ head -c 2 "$picture" | grep -q P6 || {
     echo "$picture is not a binary PPM" >&2
     exit 1
 }
+
+# The game finds the CD folder itself now. These two checks run it against a
+# home directory of their own, so whatever this machine's owner has already
+# saved cannot answer for them.
+home="$work/home"
+mkdir -p "$home/Library/Application Support/Star Wars Chess"
+
+echo "== refusing a headless run that names no CD folder"
+if env -u SWCHESS_CD -u SWCHESS_ASSETS HOME="$home" \
+        "$app/Contents/MacOS/Star Wars Chess" \
+        --script "e2e4" --dump-at 100 "$work/none.ppm" 2>"$work/none.err"; then
+    echo "the game started with no CD folder set" >&2
+    exit 1
+fi
+grep -q -- "--cd" "$work/none.err" || {
+    cat "$work/none.err" >&2
+    echo "the refusal does not tell the player to pass --cd" >&2
+    exit 1
+}
+
+echo "== reading the CD folder from the saved configuration"
+printf '%s\n%s\n%s\n%s\n' \
+    "# Star Wars Chess startup settings. The game writes this file." \
+    "version=1" \
+    "cd=$cd_dir" \
+    "assets=$assets_dir" \
+    > "$home/Library/Application Support/Star Wars Chess/startup.conf"
+saved="$work/saved.ppm"
+env -u SWCHESS_CD -u SWCHESS_ASSETS HOME="$home" \
+    "$app/Contents/MacOS/Star Wars Chess" --script "e2e4" --dump-at 100 "$saved"
+if [ ! -s "$saved" ]; then
+    echo "the saved configuration did not start the game" >&2
+    exit 1
+fi
 
 echo "== the fresh checkout builds, tests and runs"

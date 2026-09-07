@@ -23,7 +23,7 @@
   <key>CFBundleIconFile</key>
   <string>@SWCHESS_ICON_NAME@</string>
   <key>LSMinimumSystemVersion</key>
-  <string>15.0</string>
+  <string>@SWCHESS_MIN_MACOS@</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
