@@ -7,7 +7,9 @@
 #include <sstream>
 #include <utility>
 
+#include "assets/cdfs.h"
 #include "board/placement.h"
+#include "platform/paths.h"
 #include "render/compositor.h"
 #include "save/cmg.h"
 #include "save/native.h"
@@ -134,11 +136,7 @@ const char* shellStateName(ShellState state) {
 }
 
 std::string defaultConfigDir() {
-    const char* home = std::getenv("HOME");
-    if (home == nullptr || home[0] == '\0') {
-        return ".";
-    }
-    return std::string(home) + "/Library/Application Support/Star Wars Chess";
+    return platform::configDir();
 }
 
 std::string settingsPathFor(const ShellOptions& options) {
@@ -154,9 +152,9 @@ ui::Settings loadShellSettings(const ShellOptions& options) {
     // Nobody has saved settings here yet. The original reads the SWC.INI the
     // installer put beside XCHESS.EXE, so read that one, and fall back to the
     // values it carries when the CD has no copy.
-    const std::string onCd = joinPath(options.cdDir, "SWC.INI");
-    if (std::filesystem::exists(onCd)) {
-        return ui::loadSettings(onCd);
+    const CdDir& cd = sharedCdDir(options.cdDir);
+    if (cd.has("SWC.INI")) {
+        return ui::loadSettings(cd.resolve("SWC.INI").string());
     }
     return ui::shippedSettings();
 }
@@ -300,8 +298,11 @@ void GameShell::playCue(const std::string& name) {
     if (clip == nullptr) {
         auto found = looseClips_.find(name);
         if (found == looseClips_.end()) {
-            std::optional<audio::Clip> loaded =
-                audio::loadWav(std::filesystem::path(joinPath(options_.cdDir, name)));
+            const CdDir& cd = sharedCdDir(options_.cdDir);
+            if (!cd.has(name)) {
+                return;
+            }
+            std::optional<audio::Clip> loaded = audio::loadWav(cd.resolve(name));
             if (!loaded.has_value()) {
                 return;
             }
@@ -617,11 +618,28 @@ bool GameShell::setSideToMove(chess::Color color) {
     return true;
 }
 
-std::string GameShell::chooseFile(bool save) {
-    if (!options_.chooseFile) {
-        return std::string();
+FileRequest GameShell::takeFileRequest() {
+    const FileRequest request = fileRequest_;
+    fileRequest_ = FileRequest::None;
+    if (request != FileRequest::None) {
+        filePending_ = request;
     }
-    return options_.chooseFile(save);
+    return request;
+}
+
+void GameShell::onFilePathChosen(const std::string& path) {
+    const FileRequest request = filePending_;
+    filePending_ = FileRequest::None;
+    if (path.empty()) {
+        // The player closed the dialog. The button label stays on the status
+        // bar and the game carries on.
+        return;
+    }
+    if (request == FileRequest::Load) {
+        loadGameFile(path);
+    } else if (request == FileRequest::Save) {
+        saveGameFile(path);
+    }
 }
 
 void GameShell::runCommand(int command, std::int64_t nowMs) {
@@ -672,24 +690,16 @@ void GameShell::runCommand(int command, std::int64_t nowMs) {
                 setMessageId(kIdHintLabel);
             }
             break;
-        case cmd::kLoadGame: {
-            const std::string path = chooseFile(false);
-            if (path.empty()) {
-                setMessageId(kIdLoadGameLabel);
-            } else {
-                loadGameFile(path);
-            }
+        case cmd::kLoadGame:
+            // The window opens the dialog on its next trip round the event
+            // loop, so the board keeps drawing while the player picks a file.
+            fileRequest_ = FileRequest::Load;
+            setMessageId(kIdLoadGameLabel);
             break;
-        }
-        case cmd::kSaveGame: {
-            const std::string path = chooseFile(true);
-            if (path.empty()) {
-                setMessageId(kIdSaveGameLabel);
-            } else {
-                saveGameFile(path);
-            }
+        case cmd::kSaveGame:
+            fileRequest_ = FileRequest::Save;
+            setMessageId(kIdSaveGameLabel);
             break;
-        }
         case cmd::kSaveSettings:
             if (saveSettingsFile()) {
                 setMessageId(kIdSaveSettingsLabel);

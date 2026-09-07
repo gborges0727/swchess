@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "assets/cdfs.h"
+
 namespace swchess::ui {
 namespace {
 
@@ -115,13 +117,6 @@ std::string faceName(const ButtonSpec& spec, ButtonFace face) {
     return name + "_U";
 }
 
-std::string joinPath(const std::string& dir, const char* name) {
-    if (dir.empty() || dir.back() == '/') {
-        return dir + name;
-    }
-    return dir + "/" + name;
-}
-
 }  // namespace
 
 const ButtonSpec& buttonSpec(int page, int slot) {
@@ -158,7 +153,7 @@ bool isPagePush(int command, int* page) {
 }
 
 ButtonBar::ButtonBar(const std::string& cdDir, text::Language language, const Settings& settings)
-    : art_(joinPath(cdDir, "XCHESS.EXE")),
+    : art_(resolveCdFile(cdDir, "XCHESS.EXE").string()),
       font_(text::loadGuiFont(cdDir)),
       strings_(text::loadStrings(cdDir, language)),
       settings_(settings) {

@@ -13,6 +13,18 @@ namespace {
 
 using nlohmann::json;
 
+// The extractor names every capture directory in uppercase, so a lowercase
+// --capture still has to find assets/captures/BBWB/interp60.
+std::string uppercased(const std::string& text) {
+    std::string out = text;
+    for (char& c : out) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return out;
+}
+
 InterpKind kindFromName(const std::string& name, const std::string& what) {
     if (name == "blank") {
         return InterpKind::Blank;
@@ -109,7 +121,7 @@ const InterpFrame* InterpSequence::frameAt(double ms) const {
 
 std::optional<InterpSequence> loadInterp(const std::string& assetsDir,
                                          const std::string& captureName) {
-    const std::string directory = assetsDir + "/captures/" + captureName + "/interp60";
+    const std::string directory = assetsDir + "/captures/" + uppercased(captureName) + "/interp60";
     const std::string manifestPath = directory + "/manifest.json";
     if (!fileExists(manifestPath)) {
         return std::nullopt;

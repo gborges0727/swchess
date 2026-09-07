@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "assets/bmp.h"
+#include "assets/cdfs.h"
 #include "assets/ne.h"
 
 namespace swchess::text {
@@ -28,16 +29,6 @@ constexpr int kGuiSpaceAdvance = 5;
 
 // A byte the font cannot draw leaves a box this wide.
 constexpr int kMissingAdvance = 14;
-
-std::string joinPath(const std::string& dir, const char* name) {
-    if (dir.empty()) {
-        return name;
-    }
-    if (dir.back() == '/') {
-        return dir + name;
-    }
-    return dir + "/" + name;
-}
 
 std::uint32_t readU32(const std::vector<std::uint8_t>& data, std::size_t at) {
     if (at + 4 > data.size()) {
@@ -224,10 +215,10 @@ bool BitmapFont::has(std::uint8_t code) const {
 }
 
 BitmapFont loadLegFont(const std::string& cdDir) {
-    const std::string titlePath = joinPath(cdDir, "TITLERES.DLL");
+    const std::string titlePath = resolveCdFile(cdDir, "TITLERES.DLL").string();
     IndexedBitmap sheet = loadNamedBitmap(titlePath, "LEGFONT");
 
-    const std::string exePath = joinPath(cdDir, "XCHESS.EXE");
+    const std::string exePath = resolveCdFile(cdDir, "XCHESS.EXE").string();
     std::vector<std::uint8_t> exe = readBinaryFile(exePath);
     const int tableCellW = readU16(exe, kLegWidthsOffset - 6);
     const int tableCellH = readU16(exe, kLegWidthsOffset - 4);
@@ -257,7 +248,7 @@ BitmapFont loadLegFont(const std::string& cdDir) {
 }
 
 BitmapFont loadGuiFont(const std::string& cdDir) {
-    const std::string path = joinPath(cdDir, "CC256.DLL");
+    const std::string path = resolveCdFile(cdDir, "CC256.DLL").string();
     IndexedBitmap strip = loadNamedBitmap(path, "GUITEXT");
 
     BitmapFont font;

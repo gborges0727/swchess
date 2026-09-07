@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "assets/cdfs.h"
 #include "engine/engine.h"
 #include "engine/original/book.h"
 #include "engine/original/cmp.h"
@@ -32,12 +33,6 @@ using original::Searcher;
 using original::SearchResult;
 using original::TimeControl;
 using original::Weights;
-
-std::string join(const std::string& dir, const std::string& file) {
-    if (dir.empty()) return file;
-    if (dir.back() == '/') return dir + file;
-    return dir + "/" + file;
-}
 
 // The clock and the depth the search runs against. No .CMP file carries
 // either one. They come from CMWIN.DAT, so every level thinks for the same
@@ -62,9 +57,9 @@ public:
     explicit OriginalEngine(const Config& config)
         : cdDir_(config.cdDir),
           level_(config.level),
-          book_(Book::load(join(config.cdDir, "BOOK.DAT"))),
-          control_(TimeControl::load(join(config.cdDir, "CMWIN.DAT"))),
-          personality_(Personality::load(join(config.cdDir, levelFileName(config.level)))) {
+          book_(Book::load(resolveCdFile(config.cdDir, "BOOK.DAT").string())),
+          control_(TimeControl::load(resolveCdFile(config.cdDir, "CMWIN.DAT").string())),
+          personality_(Personality::load(resolveCdFile(config.cdDir, levelFileName(config.level)).string())) {
         weights_ = original::weightsFor(personality_);
         worker_ = std::thread([this] { workerLoop(); });
     }
@@ -99,7 +94,7 @@ public:
     }
 
     void setLevel(Level level) override {
-        Personality loaded = Personality::load(join(cdDir_, levelFileName(level)));
+        Personality loaded = Personality::load(resolveCdFile(cdDir_, levelFileName(level)).string());
         Weights weights = original::weightsFor(loaded);
         std::lock_guard<std::mutex> lock(mutex_);
         level_ = level;

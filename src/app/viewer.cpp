@@ -13,6 +13,9 @@
 // window, so they run on a machine with no display.
 
 #include <SDL3/SDL.h>
+// Windows starts a GUI program at WinMain. This header renames our main so
+// that SDL supplies the one Windows looks for.
+#include <SDL3/SDL_main.h>
 
 #include <chrono>
 #include <cstdio>
@@ -29,6 +32,7 @@
 #include "app/review.h"
 #include "assets/anx.h"
 #include "assets/bmp.h"
+#include "assets/cdfs.h"
 #include "assets/wav.h"
 #include "audio/audio.h"
 #include "board/board_view.h"
@@ -173,7 +177,7 @@ bool parseOptions(int argc, char** argv, Options& options) {
 }
 
 std::string backgroundPath(const std::string& cdDir, const std::string& name) {
-    return cdDir + "/" + name + ".BMP";
+    return swchess::resolveCdFile(cdDir, name + ".BMP").string();
 }
 
 const swchess::anim::CapturePose* findPose(const swchess::anim::CaptureTimeline& timeline,

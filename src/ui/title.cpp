@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <utility>
 
+#include "assets/cdfs.h"
+
 namespace swchess::ui {
 namespace {
 
@@ -12,13 +14,6 @@ constexpr std::int64_t kDurations[kTitleStateCount] = {3000, 3000, 60000, 5000, 
 // The first id of each block, and the id that holds its line count.
 constexpr int kCrawlCountId = 14000;
 constexpr int kCreditsCountId = 15000;
-
-std::string joinPath(const std::string& dir, const char* name) {
-    if (dir.empty() || dir.back() == '/') {
-        return dir + name;
-    }
-    return dir + "/" + name;
-}
 
 int parseCount(std::string_view bytes) {
     int value = 0;
@@ -82,7 +77,7 @@ std::vector<std::string> titleCues(TitleState state) {
 }
 
 TitleSequence::TitleSequence(const std::string& cdDir, text::Language language)
-    : art_(joinPath(cdDir, "TITLERES.DLL")),
+    : art_(resolveCdFile(cdDir, "TITLERES.DLL").string()),
       font_(text::loadLegFont(cdDir)),
       strings_(text::loadStrings(cdDir, language)) {
     loadBlock(kCrawlCountId, &crawl_, &crawlMargin_);

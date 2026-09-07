@@ -7,6 +7,7 @@
 #include <mutex>
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "assets/ini.h"
 #include "assets/wav.h"
 
@@ -152,8 +153,11 @@ CaptureTimeline loadCapture(const std::string& cdDir, const std::string& name) {
     return loadCapture(cdDir, name, sharedSoundCatalog(cdDir));
 }
 
-CaptureTimeline loadCapture(const std::string& cdDir, const std::string& name,
+CaptureTimeline loadCapture(const std::string& cdDir, const std::string& rawName,
                             const SoundCatalog& sounds) {
+    // The CD writes every capture code in uppercase, so --capture bbwb has to
+    // reach BBWB.ANX and the [BBWB] section.
+    const std::string name = uppercased(rawName);
     if (name.size() < 4) {
         throw std::runtime_error("capture name must have four characters: " + name);
     }
@@ -161,13 +165,13 @@ CaptureTimeline loadCapture(const std::string& cdDir, const std::string& name,
     timeline.name = name;
     // The file holds every capture with the same attacker, so its name is the
     // first two characters of the code. The section uses all four.
-    timeline.iniPath = cdDir + "/" + name.substr(0, 2) + ".INI";
+    timeline.iniPath = resolveCdFile(cdDir, name.substr(0, 2) + ".INI").string();
 
-    std::string anxPath = cdDir + "/" + name + ".ANX";
+    std::string anxPath = resolveCdFile(cdDir, name + ".ANX").string();
     timeline.anx = loadAnx(anxPath);
     std::vector<RawPosition> positions = readPositions(anxPath);
 
-    IniFile cm(cdDir + "/CM.INI");
+    IniFile cm(resolveCdFile(cdDir, "CM.INI").string());
     timeline.frameDelayMs = sectionInt(cm.section("defaults"), "frame_delay", kDefaultFrameDelay);
 
     IniFile ini(timeline.iniPath);

@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "assets/cdfs.h"
 #include "assets/ini.h"
 
 namespace swchess::anim {
@@ -118,10 +119,10 @@ WalkSequence loadWalkSection(const std::string& cdDir, const std::string& piece,
     WalkSequence walk;
     walk.piece = uppercased(piece);
     walk.section = uppercased(section);
-    walk.iniPath = cdDir + "/" + walk.piece + ".INI";
-    walk.dllPath = cdDir + "/" + walk.piece + ".DLL";
+    walk.iniPath = resolveCdFile(cdDir, walk.piece + ".INI").string();
+    walk.dllPath = resolveCdFile(cdDir, walk.piece + ".DLL").string();
 
-    IniFile cm(cdDir + "/CM.INI");
+    IniFile cm(resolveCdFile(cdDir, "CM.INI").string());
     walk.frameDelayMs = sectionInt(cm.section("defaults"), "frame_delay", kDefaultFrameDelay);
 
     IniFile ini(walk.iniPath);
@@ -348,7 +349,6 @@ WalkUpdate WalkPlayer::advance(std::int64_t nowMs) {
         at = positions_.size() - 1;
     }
     update.draw = positions_[at];
-    update.finished = finished_;
     // The enhanced cadence carries the piece between this point and the next
     // one by the clock. The two points are eight pixels apart and 100 ms
     // apart, so a caller drawing 60 times a second moves it about 1.3 pixels
@@ -363,6 +363,7 @@ WalkUpdate WalkPlayer::advance(std::int64_t nowMs) {
         update.draw.y = here.y + static_cast<int>(std::lround((next.y - here.y) * part));
         update.draw.progress = here.progress + (next.progress - here.progress) * part;
     }
+    update.finished = finished_;
     return update;
 }
 

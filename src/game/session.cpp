@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "assets/anx.h"
+#include "assets/cdfs.h"
 #include "assets/wav.h"
 #include "render/compositor.h"
 
@@ -159,7 +160,7 @@ void GameSession::rebuildScene() {
 void GameSession::applyBackground() {
     scene_.settings.background = settings_.background;
     scene_.backgroundSource = board::backgroundName(settings_.set, scene_.settings) + ".BMP";
-    scene_.background = loadBmp(cdDir_ + "/" + scene_.backgroundSource);
+    scene_.background = loadBmp(resolveCdFile(cdDir_, scene_.backgroundSource).string());
 }
 
 void GameSession::setBackground(int background) {
@@ -209,10 +210,10 @@ void GameSession::cycleLanguage() {
 
 void GameSession::setCadence(anim::Cadence cadence) {
     settings_.cadence = cadence;
-    if (state_ != AnimState::Capturing) {
     // The walker needs no generated pictures to move smoothly, so it takes
     // the new cadence whether or not a walk is running.
     walker_.setCadence(cadence);
+    if (state_ != AnimState::Capturing) {
         return;
     }
     // The player refuses the enhanced cadence when this capture has no
@@ -675,8 +676,8 @@ void GameSession::startLeg(std::size_t index, std::int64_t nowMs) {
     const board::ProjectedPoint to = anchorOf(leg.to);
     leg.fromDepth = from.depth;
     leg.toDepth = to.depth;
-    walker_.start(leg.walk, from.x, from.y, to.x, to.y, nowMs);
     walker_.setCadence(settings_.cadence);
+    walker_.start(leg.walk, from.x, from.y, to.x, to.y, nowMs);
     walkDraw_ = walker_.advance(nowMs).draw;
 }
 

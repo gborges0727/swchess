@@ -3,6 +3,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "assets/ne.h"
 
 namespace swchess {
@@ -88,7 +89,7 @@ WaveSound loadWavFile(const std::string& path) {
 }
 
 std::vector<WaveResource> loadAudioDll(const std::string& dir) {
-    std::vector<std::uint8_t> blob = readBinaryFile(dir + "/SWCAUDIO.DLL");
+    std::vector<std::uint8_t> blob = readBinaryFile(resolveCdFile(dir, "SWCAUDIO.DLL").string());
     std::vector<NeResource> resources = readNeResources(blob);
     std::vector<WaveResource> out;
     for (const NeResource& resource : resources) {

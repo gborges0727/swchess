@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include "assets/cdfs.h"
+
 namespace swchess::board {
 namespace {
 
@@ -80,7 +82,7 @@ BoardSettings loadBoardSettings(const std::string& path) {
 }
 
 BoardSettings loadBoardSettingsFromCd(const std::string& cdDir) {
-    return loadBoardSettings(cdDir + "/CMWIN.DAT");
+    return loadBoardSettings(resolveCdFile(cdDir, "CMWIN.DAT").string());
 }
 
 BoardGeometry BoardGeometry::build(const BoardSettings& settings, Orientation orientation,

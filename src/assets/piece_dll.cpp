@@ -3,6 +3,7 @@
 #include <cctype>
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "assets/ne.h"
 
 namespace swchess {
@@ -46,7 +47,7 @@ PieceDll loadPieceDll(const std::string& dir, const std::string& piece) {
     PieceDll out;
     out.piece = piece;
     out.source = piece + ".DLL";
-    std::string path = dir + "/" + out.source;
+    std::string path = resolveCdFile(dir, out.source).string();
     std::vector<std::uint8_t> blob = readBinaryFile(path);
     std::vector<NeResource> resources = readNeResources(blob);
 

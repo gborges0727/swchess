@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "assets/ini.h"
 
 namespace swchess {
@@ -49,7 +50,7 @@ std::string sheetFileName(const std::string& key) {
 }
 
 PieceSheet loadPieceSheet(const std::string& dir, const std::string& key) {
-    IniFile cm(dir + "/CM.INI");
+    IniFile cm(resolveCdFile(dir, "CM.INI").string());
     const IniSection* chesssets = cm.section("chesssets");
     if (chesssets == nullptr) {
         throw std::runtime_error("CM.INI has no [chesssets] section");
@@ -72,7 +73,7 @@ PieceSheet loadPieceSheet(const std::string& dir, const std::string& key) {
                                  key);
     }
 
-    IndexedBitmap bitmap = loadBmpIndexed(dir + "/" + sheet.source);
+    IndexedBitmap bitmap = loadBmpIndexed(resolveCdFile(dir, sheet.source).string());
     sheet.sheetWidth = bitmap.width;
     sheet.sheetHeight = bitmap.height;
 

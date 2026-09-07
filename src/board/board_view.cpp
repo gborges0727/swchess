@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "render/compositor.h"
 
 namespace swchess::board {
@@ -25,7 +26,7 @@ BoardScene loadBoardScene(const std::string& cdDir, SetId set) {
     scene.geometry = geometryFor(set, scene.settings);
     scene.sheet = loadPieceSheet(cdDir, setKey(set));
     scene.backgroundSource = backgroundName(set, scene.settings) + ".BMP";
-    scene.background = loadBmp(cdDir + "/" + scene.backgroundSource);
+    scene.background = loadBmp(resolveCdFile(cdDir, scene.backgroundSource).string());
     return scene;
 }
 

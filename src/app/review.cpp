@@ -19,6 +19,7 @@
 #include "anim/player.h"
 #include "assets/anx.h"
 #include "assets/bmp.h"
+#include "assets/cdfs.h"
 #include "assets/wav.h"
 #include "audio/audio.h"
 #include "render/compositor.h"
@@ -88,7 +89,7 @@ constexpr int kSpeedCount = 6;
 constexpr int kNormalSpeed = 3;
 
 std::string backgroundPath(const std::string& cdDir, const std::string& name) {
-    return cdDir + "/" + name + ".BMP";
+    return swchess::resolveCdFile(cdDir, name + ".BMP").string();
 }
 
 // Everything the review reads off the disk once.

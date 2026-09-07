@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "assets/cdfs.h"
 #include "assets/ne.h"
 
 namespace swchess::text {
@@ -10,16 +11,6 @@ namespace {
 // Sixteen strings live in one resource, and the first resource holds ids 0 to
 // 15.
 constexpr int kStringsPerTable = 16;
-
-std::string joinPath(const std::string& dir, const char* name) {
-    if (dir.empty()) {
-        return name;
-    }
-    if (dir.back() == '/') {
-        return dir + name;
-    }
-    return dir + "/" + name;
-}
 
 }  // namespace
 
@@ -74,7 +65,7 @@ std::vector<int> StringTable::ids() const {
 }
 
 StringTable loadStrings(const std::string& cdDir, Language language) {
-    const std::string path = joinPath(cdDir, languageFileName(language));
+    const std::string path = resolveCdFile(cdDir, languageFileName(language)).string();
     std::vector<std::uint8_t> blob = readBinaryFile(path);
     std::vector<NeResource> resources = readNeResources(blob);
 
