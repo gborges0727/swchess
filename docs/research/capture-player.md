@@ -473,7 +473,9 @@ something, `FUN_1058_0a0a` stops it before the film's first frame instead.
   `LUKE.WAV` with flag 1.
 - The title screens. `FUN_1070_030a` plays `STWPRES.WAV` and then `SWTHEME.WAV` when the
   opening crawl starts, and `SWTHEME.WAV` again for the credit roll. `WM_DESTROY` plays
-  `ENERGIZE.WAV`.
+  `ENERGIZE.WAV`. The port plays `STWPRES.WAV` over the Toolworks logo instead, because
+  in the original that line was heard over the logo screen `CHESSAPP.EXE` drew before
+  `XCHESS.EXE` started, and the port runs no separate logo program.
 
 ### The events that have no sound
 

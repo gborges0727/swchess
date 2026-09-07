@@ -97,7 +97,7 @@ window and the sequence ends.
 | --- | --- | --- | --- | --- | --- |
 | 0 | Toolworks logo | `STLGO16`, 640 by 480, 8bpp | none | 3000 ms | none |
 | 1 | Legal notice | `LEGAL`, 640 by 480, 8bpp | none | 3000 ms | none |
-| 2 | Opening crawl | string ids 14001 upward | LEGFONT | 60000 ms | `STWPRES.WAV` then `SWTHEME.WAV` |
+| 2 | Opening crawl | string ids 14001 upward | LEGFONT | 60000 ms | `STWPRES.WAV` then `SWTHEME.WAV` (the port moves `STWPRES.WAV` to state 0) |
 | 3 | Title | `STARTITL`, 640 by 480, 8bpp | none | 5000 ms | none |
 | 4 | Credit roll | string ids 15001 upward | LEGFONT | 140000 ms | `SWTHEME.WAV` |
 

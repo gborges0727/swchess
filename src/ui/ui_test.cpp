@@ -253,12 +253,12 @@ void testTitle(const std::string& cdDir, const std::string& outDir) {
     // The cues each screen starts.
     swchess::ui::TitleSequence again(cdDir, swchess::text::Language::English);
     again.start(0);
-    check(again.takeCues().empty(), "the Toolworks logo starts no sound");
+    check(again.takeCues() == std::vector<std::string>{"STWPRES.WAV"},
+          "the Toolworks logo starts STWPRES");
     again.advance(3000);
     again.advance(6000);
     const std::vector<std::string> cues = again.takeCues();
-    check(cues.size() == 2 && cues[0] == "STWPRES.WAV" && cues[1] == "SWTHEME.WAV",
-          "the crawl starts STWPRES then SWTHEME");
+    check(cues == std::vector<std::string>{"SWTHEME.WAV"}, "the crawl starts SWTHEME");
     again.skip();
     check(again.state() == swchess::ui::TitleState::Title, "a click ends the crawl early");
     again.skip();

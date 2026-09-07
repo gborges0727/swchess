@@ -63,8 +63,13 @@ const char* titleMusicCue(TitleState state) {
 
 std::vector<std::string> titleCues(TitleState state) {
     switch (state) {
+        case TitleState::ToolworksLogo:
+            // The original's separate logo program spoke this line over its
+            // own Toolworks screen before XCHESS.EXE started, so the port
+            // speaks it over the logo rather than over the crawl.
+            return {"STWPRES.WAV"};
         case TitleState::Crawl:
-            return {"STWPRES.WAV", "SWTHEME.WAV"};
+            return {"SWTHEME.WAV"};
         case TitleState::Credits:
             return {"SWTHEME.WAV"};
         case TitleState::Finished:
