@@ -48,6 +48,11 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/src/chess/CMakeLists.txt)
   add_subdirectory(src/chess)
 endif()
 
+# The computer opponent. It needs the chess rules module, so it comes after.
+if(EXISTS ${CMAKE_SOURCE_DIR}/src/engine/CMakeLists.txt)
+  add_subdirectory(src/engine)
+endif()
+
 # The audio module arrives separately too. Build it when it is present.
 if(EXISTS ${CMAKE_SOURCE_DIR}/src/audio/CMakeLists.txt)
   add_subdirectory(src/audio)
