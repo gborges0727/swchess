@@ -83,9 +83,20 @@ while(pending)
 endwhile()
 
 # Rewriting load commands breaks the signature the linker wrote, so sign the
-# binary and every library again without a certificate.
+# binary and every library again without a certificate. A release replaces
+# these signatures in scripts/package-macos.sh. A failure here leaves a
+# binary macOS refuses to start, so stop the build and say so.
+function(swchess_sign path)
+  execute_process(COMMAND codesign --force --sign - "${path}"
+                  OUTPUT_QUIET
+                  ERROR_VARIABLE complaint
+                  RESULT_VARIABLE status)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "codesign failed on ${path}: ${complaint}")
+  endif()
+endfunction()
+
 foreach(name IN LISTS copied)
-  execute_process(COMMAND codesign --force --sign - "${FRAMEWORKS_DIR}/${name}"
-                  OUTPUT_QUIET ERROR_QUIET)
+  swchess_sign("${FRAMEWORKS_DIR}/${name}")
 endforeach()
-execute_process(COMMAND codesign --force --sign - "${APP_BINARY}" OUTPUT_QUIET ERROR_QUIET)
+swchess_sign("${APP_BINARY}")
