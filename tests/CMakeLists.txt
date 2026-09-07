@@ -66,7 +66,7 @@ add_custom_command(
 add_custom_target(assets_oracle ALL DEPENDS "${SWCHESS_ASSET_ORACLE}")
 
 add_executable(assets_oracle_test assets_oracle_test.cpp)
-target_link_libraries(assets_oracle_test PRIVATE swchess_assets)
+target_link_libraries(assets_oracle_test PRIVATE swchess_assets swchess_export)
 target_compile_options(assets_oracle_test PRIVATE -Wall -Wextra)
 add_dependencies(assets_oracle_test assets_oracle)
 

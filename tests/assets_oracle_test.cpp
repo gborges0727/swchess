@@ -9,7 +9,6 @@
 //   assets_oracle_test <oracle.txt> <cd dir> waves
 //   assets_oracle_test <oracle.txt> <cd dir> totals <pieces> <cells> <waves> <distinct>
 
-#include <CommonCrypto/CommonDigest.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,17 +23,12 @@
 #include "assets/piece_dll.h"
 #include "assets/sheet.h"
 #include "assets/wav.h"
+#include "export/sha256.h"
 
 namespace {
 
 std::string sha256Hex(const std::uint8_t* bytes, std::size_t length) {
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(bytes, static_cast<CC_LONG>(length), digest);
-    char text[CC_SHA256_DIGEST_LENGTH * 2 + 1];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) {
-        std::snprintf(text + i * 2, 3, "%02x", digest[i]);
-    }
-    return std::string(text, CC_SHA256_DIGEST_LENGTH * 2);
+    return swchess::exporter::sha256Hex(bytes, length);
 }
 
 std::string hex(std::size_t value) {

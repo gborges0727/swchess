@@ -219,7 +219,7 @@ std::string pythonFloatRepr(double value) {
         int shown = point - 1;
         out += shown < 0 ? '-' : '+';
         int magnitude = shown < 0 ? -shown : shown;
-        char exponentText[8];
+        char exponentText[16];
         std::snprintf(exponentText, sizeof(exponentText), "%02d", magnitude);
         out += exponentText;
         return out;
