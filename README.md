@@ -1,231 +1,342 @@
-# Star Wars Chess for macOS
+# Star Wars Chess
 
-This is a native macOS rewrite of Star Wars Chess, the Software Toolworks game
-released for Windows 3.1 in 1993. Every line of code here was written from
-scratch by reading the original binaries and data files. It plays the original
-artwork, animations, sounds, four piece sets and four languages, and it can
-play the capture animations interpolated to 60 frames per second.
+Star Wars Chess is a chess game The Software Toolworks published for Windows
+3.1 in 1993. Every capture plays a short animated film in which one character
+destroys another. This repository holds a reimplementation of that game in
+C++20 and SDL3, written by decompiling the original binaries and rewriting what
+they do. No emulator runs here, and no byte of the original program executes.
+The game reads the artwork, sound and text from your own copy of the CD, which
+this repository does not contain. It builds and runs on macOS, Windows and
+Linux.
 
-## What you need
+## What works
 
-- A Mac running macOS 11 or later. The release build carries both Apple
-  silicon and Intel code.
-- [Homebrew](https://brew.sh), then `brew bundle` in this directory to install
-  cmake, ninja, sdl3 and nlohmann-json.
-- Python 3, which the asset extractor and the interpolation tool both use.
-- Your own copy of the original CD.
+You can play a whole game against the computer or against another person at the
+same keyboard. The port covers these parts of the original.
 
-This repository ships none of the game's files. Copy your CD into
-`original/win3x/cd`, so that `original/win3x/cd/XCHESS.EXE` exists. Git ignores
-`original/`, so nothing you put there is committed.
+- **All four board sets.** `CM.INI [chesssets]` names them `WHTBTM_`, `WHTTOP_`
+  and `FACING_` in three dimensions and `2DSET_` flat. Each square projects,
+  each piece anchors and each click maps back to a square in all four.
+- **All four languages.** English, French, German and Spanish come out of
+  `RESENG.DLL`, `RESGER.DLL`, `RESFRN.DLL` and `RESSPN.DLL`, 528 string slots
+  each. Both bitmap fonts draw, `LEGFONT` for the opening crawl and `GUITEXT`
+  for the buttons and the status bar.
+- **The original engine.** `src/engine/original/` is a port of `CHESSAPP.EXE`,
+  the second program the 1993 game started and talked to over DDE. It searches
+  and scores with the constants read out of that binary, and it plays the five
+  levels the `.CMP` files on the CD configure, from Newcomer to Expert. Every
+  button that reaches the engine works: hint, force move, take back, replay,
+  switch sides, offer a draw, the five level buttons, and the human against
+  human, human against computer and computer against computer pairings.
+- **Saved games.** `src/save/cmg.cpp` reads and writes the original `.CMG`
+  file. The port also writes a JSON save, because a `.CMG` drops the castling
+  rights, the en passant square and the halfmove clock, and the JSON keeps
+  them.
+- **60 frames a second.** All 72 capture films and all twelve pieces' walk
+  cycles are interpolated offline with RIFE, a neural frame interpolator. The
+  films keep their original length to the millisecond. The `I` key switches
+  back to the poses the artists drew, at the 120 millisecond capture cadence
+  and the 100 millisecond walk cadence the original used.
+- **Sound.** The 110 `WAVE` records in `SWCAUDIO.DLL` and the four loose WAV
+  files on the CD play on the animation clock. Each piece speaks its own line
+  as it moves, a film's cues fire at the millisecond the original fired them,
+  and the victory and title lines play where they belong.
 
-## Build and run
+### Where the port differs from the original
 
-The extractor reads the CD files and writes decoded PNGs, sounds, string
-tables and manifests into `assets/`. Run it first, then build, test and play.
+Six things do not match the 1993 game. Five of them follow from a question the
+decompilation left open, and `docs/research/` records what was and was not
+proven. The sixth follows from the port running one program where the original
+ran two.
+
+| What differs | Why |
+| --- | --- |
+| A walking piece covers four pixels per 100 millisecond tick | `docs/research/board-geometry.md` reports that `11d8:84a0` receives a per-frame step budget but no instruction decrements it, so the original's pace is unknown. Four pixels lets the moving piece's voice line finish before it arrives. |
+| The sound on a film's first pose plays at time zero | The player decodes pose 0 and frees it without drawing it. Three films attach a sound to that pose. The port plays it once, at the start, rather than dropping it. |
+| The engine plays from a rebuilt opening book | The book compiled into `CHESSAPP.EXE` stores moves as indexes into its own generator's emission order, so reading it means reproducing that order exactly. `Book::load` replays the 169 lines of `BOOK.DAT` from the start position instead and indexes every position they pass through. |
+| Two piece-square generators are approximated | The original rebuilds six tables at the start of every search. The generators at `1000:33E1` and `1000:36A3` were not decoded, so their constants are still open. |
+| The opening book only promotes to a queen | `docs/research/menus.md` finds no promotion string in any resource DLL and no menu slot that offers one, so which piece the original chose is unresolved. A human player picks from a four-piece panel; a book line that reaches the last rank queens. |
+| `STWPRES.WAV` plays over the Toolworks logo | The original spoke that line over a logo screen `CHESSAPP.EXE` drew before `XCHESS.EXE` started. The port runs no separate logo program, so the line moved to the logo the port draws. |
+
+## How it was made
+
+Ghidra 12.1.3 imported `XCHESS.EXE` and `CHESSAPP.EXE` headless with its NE
+loader and the `x86:LE:16:Protected Mode` language. All 1,183 functions of the
+front end and all 286 of the engine decompiled. Borland's 32-bit helper calls
+`LXMUL@` and `LDIV@` lose their arguments in the decompiler output, so every
+arithmetic formula in the research notes was read off the disassembly instead.
+
+Python decoders came first and became the oracle. `tools/reference/anx.py`
+decodes the escape-byte run length encoding that the 72 `.ANX` capture files
+and the 1,344 piece bitmaps share. `tools/extract/ne.py` parses NE resource
+tables without loading a DLL. The board projection works in signed 32-bit fixed
+point where 1.0 is 32767, reading two tables of 360 signed longs for sine and
+cosine, and the Python side reproduces that arithmetic including its truncating
+integer division. `tools/extract/captures.py` applies the capture timing rules:
+pose `i` appears at `i * 120` milliseconds, a `pause=1` sound stops the loop
+until it finishes, and a `pause=2` sound makes the next sounding pose wait.
+`tools/fonts/` recovers the glyph substitution, because the string tables store
+accented letters as printable ASCII codes that each bitmap font fills
+differently.
+
+The C++ decoders in `src/assets` and `src/export` were then written
+independently and checked against the Python output byte for byte. Those are
+the oracle tests, `tests/anx_oracle_test.cpp` and `tests/assets_oracle_test.cpp`
+plus the two shell drivers `src/export/export_oracle_test.sh` and
+`src/interp/interp_oracle_test.sh`.
+
+The board geometry came out of `CMWIN.DAT`, not out of `CM.INI`. The 26 keys in
+`CM.INI [board]` are dead code in this build, because the routine that reads
+them has no caller. `FUN_1008_37bc` reads the 144 bytes of `CMWIN.DAT` straight
+over the block of board variables, so the vanishing point is 335, the board size
+535, the turn angle 360 and the tilt 307. `docs/research/board-geometry.md`
+lists every byte.
+
+The engine port keeps the original's numbers. `INF` is 25600 and `PLYMAX` is 32
+because the binary tests `iterct >= (PLYMAX - 2)` against 30. Newcomer throws
+away 60 percent of its candidate moves and rates its queen at 4770, which is how
+the original made its easy levels easy, so the port does the same two things
+rather than approximating the result.
+
+The frame interpolation runs offline, never during play. `tools/rife/build.sh`
+builds `rife-ncnn-vulkan` at a pinned commit with the `rife-v4.6` model.
+
+That binary reads three colour channels and ignores PNG alpha. So the pipeline
+places every pose of a film on one shared canvas, then splits each pose into a
+colour image over black and a grayscale alpha image. It runs both sequences
+through RIFE at identical interpolation times and recombines the results.
+
+The pipeline samples the resolved timeline at `n / 60` seconds. A sample that
+coincides with an authored pose copies that pose through unchanged. Sampling by
+timestamp is what keeps the film's duration and every sound cue exactly where
+the original put them.
+
+The walk cycles go through the same tool in `--walk` mode. Five generated
+pictures between each pair of hand drawn poses turn one 100 millisecond step
+into six frames.
+
+The game finds the CD by itself. `src/app/startup.cpp` opens the window first,
+then looks for the folder, so the folder dialog has a window to belong to and
+the player sees the program start.
+
+SDL3, nlohmann-json and zlib are pinned in `cmake/Dependencies.cmake` and built
+from source when `SWCHESS_VENDOR_DEPS` is on, so a released binary loads nothing
+from Homebrew or a distribution package. `scripts/package-macos.sh` signs the
+app and `scripts/notarize-macos.sh` sends it to Apple. `.github/workflows/build.yml`
+builds on macOS, Ubuntu, Fedora and Windows on every push.
+
+The work was done with Claude Code driving many agents in parallel. The
+decompilation results and the design decisions are written up under
+`docs/research/`, one note per subsystem, with the Ghidra addresses behind every
+claim.
+
+## Build from source
+
+You need CMake 3.28, Ninja and a C++20 compiler.
 
 ```sh
-python3 -m tools.extract --cd original/win3x/cd --out assets
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/swchess --cd original/win3x/cd --assets assets
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
 ```
 
-`--cd` and `--assets` are optional when the game opens a window. Without them
-it reads `SWCHESS_CD` and `SWCHESS_ASSETS`, then the file it keeps at
-`~/Library/Application Support/Star Wars Chess/startup.conf`, and then it asks
-for the CD folder in a Finder chooser and remembers the answer. A folder that
-does not hold `XCHESS.EXE`, `CC256.DLL` and `CMWIN.DAT` gets a message saying
-which file is missing, and the chooser opens again. The decoded artwork goes
-to `~/Library/Application Support/Star Wars Chess/assets` when nothing names
-another folder, and a run with no decoded artwork plays the original 120 ms
-capture poses.
+The `dev` preset builds against the SDL3, nlohmann-json and zlib your machine
+already has, which is faster, and it turns the tests on. The four release
+presets build all three from pinned source instead: `macos-release` for arm64
+Macs at deployment target 12.0, `linux-release`, `windows-msvc-release`, and
+`windows-mingw-release`, which cross-compiles a self-contained 64-bit Windows
+executable from a Mac or a Linux machine with MinGW-w64.
+
+To build for Linux from any machine with Docker, run the Ubuntu container with
+the repository mounted read-only and keep the build inside the container.
+
+```sh
+docker run --rm -v "$PWD:/src:ro" -w /tmp ubuntu:24.04 sh -c '
+  apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build pkg-config zlib1g-dev \
+    libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+    libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+    libwayland-dev wayland-protocols libxkbcommon-dev \
+    libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
+    libudev-dev libdbus-1-dev &&
+  cmake -S /src -B build -G Ninja -DCMAKE_BUILD_TYPE=Release &&
+  cmake --build build --target swchess'
+```
+
+Only one test runs without the CD. `chess_perft_test` counts the moves of the
+rules module and reads nothing. Every other test needs the original files,
+because it compares a decoded pixel buffer or a resolved timeline against them,
+so CMake registers those tests only when `original/win3x/cd` exists. That is
+why the CI jobs run `chess_perft_test` and nothing else.
+
+## Run
+
+Copy your CD into a folder, so that `XCHESS.EXE`, `CC256.DLL` and `CMWIN.DAT`
+sit inside it. Case does not matter, because the game indexes the folder by the
+uppercased form of every name. Then start the game.
+
+```sh
+./build/dev/swchess --cd /path/to/cd
+```
+
+The game looks for the CD in five places, in this order. A build that carries
+its own copy of the CD beside the program wins outright and reads nothing else.
+Otherwise it takes `--cd`, then the `SWCHESS_CD` environment variable, then the
+`cd=` line of `startup.conf`. When those first four come up empty it opens a
+folder dialog and asks. A folder missing any of the three required files produces a
+message naming the missing file, and the dialog opens again. The answer goes
+into `startup.conf`, so the game asks once.
 
 A `--script` or `--dump-at` run draws into a file and opens no window, so it
-opens no chooser either. Those runs need `--cd` or `SWCHESS_CD` and stop with
-a message when they have neither.
+cannot ask. Those runs need `--cd` or `SWCHESS_CD` and stop with a message when
+they have neither.
 
-These keys work while the game runs, and any key or click skips a capture.
+| System | Settings and saves | Artwork cache |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/Star Wars Chess` | the same folder, in `assets` |
+| Windows | `%APPDATA%\FairLine\Star Wars Chess` | `%LOCALAPPDATA%\FairLine\Star Wars Chess\cache` |
+| Linux | `$XDG_CONFIG_HOME/swchess`, else `~/.config/swchess` | `$XDG_CACHE_HOME/swchess`, else `~/.cache/swchess` |
+
+The buttons along the bottom of the board are the original's, so most of the
+game is played with the mouse. These keys work as well, and any key or click
+skips a capture film that is playing.
 
 | Key | What it does |
 | --- | --- |
-| 1 to 4 | Picks the WHTBTM, WHTTOP, FACING or 2D piece set |
+| 1 to 4 | Picks the WHTBTM, WHTTOP, FACING or 2D set |
 | L | Moves to the next language |
 | W | Turns walking between squares on and off |
-| C | Turns the capture animations on and off |
-| I | Switches between the interpolated and the original capture cadence |
+| C | Turns the capture films on and off |
+| I | Switches between the 60 fps and the original cadence |
 | U | Takes the last move back |
 | N | Starts a new game |
 | Esc | Quits |
 
-Build the double-clickable application with the packaging script. It writes
-`build/Star Wars Chess.app` with SDL3 copied inside and prints its size.
+## The asset cache and the interpolation
+
+The game plays straight off the CD with no cache. It decodes what it needs when
+it needs it and shows the poses the artists drew. Two helper programs fill a
+cache, and the game plays the 60 fps frames only when that cache holds them.
+
+`swchess-extract` reads the CD and writes decoded PNGs, sounds, string tables
+and manifests.
 
 ```sh
-./scripts/build-app.sh
+./build/dev/src/export/swchess-extract --cd /path/to/cd --out assets
 ```
 
-The bundle holds no game data. The first time someone opens it, the game asks
-for their CD folder and writes the answer to
-`~/Library/Application Support/Star Wars Chess/startup.conf`. Later launches
-read that file and start straight away.
+That run takes about five seconds and writes 59 MB. It prints the counts it
+found and exits non-zero if any of them moved: 4,799 distinct capture records,
+5,414 timeline entries, 5,342 poses the player actually draws, 1,344 piece
+bitmaps and 110 `WAVE` records.
+
+`swchess-interpolate` then generates the frames between those poses.
+
+```sh
+./build/dev/src/interp/swchess-interpolate --assets assets
+./build/dev/src/interp/swchess-interpolate --check assets/captures/BBWB/interp60
+```
+
+All 72 films took 71 minutes on an Apple M4 Pro and grew the cache to about
+970 MB. RIFE needs a Vulkan GPU, which on macOS means MoltenVK translating
+Vulkan to Metal. `tools/rife/build.sh` builds the binary and the model, and
+`tools/rife/smoke.sh` proves the build by asking for the frame halfway between
+a white square at x=20 and the same square at x=60. The bright pixels in the
+answer must sit within 8 pixels of x=40.
+
+The walk cycles go through the Python tool, which is the only one that
+implements `--walk`.
+
+```sh
+python3 -m tools.interp --walk all --assets assets
+```
+
+To watch one film at both cadences side by side, with frame stepping and a
+choice of background, use `swchess-viewer --review BBWB`.
 
 ## Release
 
-Four scripts turn the source into a disk image a player can download. Run
-them in this order. The build directory `build-release` is separate from
-`build` so the release never reuses objects from a developer build.
+`scripts/build-app.sh` writes `Star Wars Chess.app`, then reads every binary
+inside it with `lipo`, `otool` and `vtool` and stops when one is missing a CPU,
+loads a library from Homebrew, or asks for a newer macOS than you named.
+`scripts/package-macos.sh` signs the helpers first and the app last and writes a
+disk image. `scripts/notarize-macos.sh` sends that image to Apple, waits for the
+answer, and staples the ticket. `scripts/check-installed-app.sh` mounts the
+image, copies the app out, checks its signature, checks that no binary reaches
+outside the bundle, checks every file against
+`packaging/bundle-allowlist.txt`, and plays 500 milliseconds of a game with the
+source tree out of reach. Signing and notarizing both need an Apple Developer
+Program membership.
 
-```sh
-./scripts/build-app.sh build-release 'arm64;x86_64' 11.0
-SWCHESS_SIGN_IDENTITY='Developer ID Application: NAME (E85W63H34G)' \
-    ./scripts/package-macos.sh 'build-release/Star Wars Chess.app' dist 0.6.1
-SWCHESS_NOTARY_PROFILE=swchess-notary ./scripts/notarize-macos.sh dist/StarWarsChess-0.6.1.dmg
-./scripts/check-installed-app.sh dist/StarWarsChess-0.6.1.dmg --cd original/win3x/cd
-```
+`scripts/package-windows.sh` stages the folder a player unzips. It renames
+`swchess.exe` to `Star Wars Chess.exe` and copies `swchess-viewer.exe` and a
+readme beside it.
 
-`build-app.sh` takes a build directory, a list of CPU architectures and the
-oldest macOS the app must run on. It passes the last two to CMake as
-`CMAKE_OSX_ARCHITECTURES` and `CMAKE_OSX_DEPLOYMENT_TARGET`. Two
-architectures need SDL3 built from source, which `-DSWCHESS_VENDOR_DEPS=ON`
-asks for. Afterwards it reads every binary in the bundle with `lipo`, `otool`
-and `vtool`. It stops when a binary is missing a CPU, loads a library from
-Homebrew or the build directory, or asks for a newer macOS than you named.
-Set `SWCHESS_AUDIT=warn` to see those complaints without stopping the build.
+Both packaging scripts take `--bundle-data`, which copies the CD files and the
+decoded artwork inside the package. That build reads its own copy and never
+asks the player for a folder. **Never publish one.** It contains the files from
+the CD, which are copyrighted, and the allow-list check exists to keep them out
+of a public release by accident.
 
-`package-macos.sh` signs the helper programs first and the app last, verifies
-the result, and writes `StarWarsChess-<version>.dmg` holding the app, a
-shortcut to Applications and `packaging/Install.txt`. Leave
-`SWCHESS_SIGN_IDENTITY` unset and it signs ad-hoc, which is enough to test
-the steps on your own Mac. Set `SWCHESS_MAKE_ZIP=1` for a zip beside the disk
-image.
+## Legal
 
-`notarize-macos.sh` sends the disk image to Apple, waits for the answer,
-saves the log as `StarWarsChess-<version>-notary.json`, and staples the
-ticket to the disk image. It stops without stapling when Apple reports
-anything other than `Accepted`. Leave `SWCHESS_NOTARY_PROFILE` unset and it
-prints the command that creates the profile, then exits without submitting.
+The code in this repository is original work under the MIT license. `LICENSE`
+holds that text, and `THIRD_PARTY_NOTICES.md` lists the libraries the port
+builds against.
 
-`check-installed-app.sh` treats the download the way a player does. It mounts
-the disk image, copies the app to a temporary folder, checks the signature,
-checks that no binary reaches outside the bundle, checks every file in the
-bundle against `packaging/bundle-allowlist.txt`, and plays 500 milliseconds
-of a game from that copy with the source tree out of reach. The allow-list is
-what keeps a file decoded from your CD out of a release.
+The artwork, sound, text, animation and executables of Star Wars Chess are
+copyright Lucasfilm Ltd. and The Software Toolworks. None of them is in this
+repository, and none of them is in any public release. The player supplies
+their own CD, and the code reads the copy that player owns. This is a clean
+reimplementation written for interoperability with data the player already
+has, the way ScummVM and OpenRA read the data files of the games they support.
 
-`package-macos.sh --bundle-data <CD folder> <assets folder>` copies the CD
-files into `Contents/Resources/cd` and the artwork into
-`Contents/Resources/assets`, signs the app after that copy, and writes
-`StarWarsChess-<version>-full.dmg`. That app reads its own copy of both
-folders and ignores `--cd`, `--assets`, `SWCHESS_CD`, `SWCHESS_ASSETS` and
-`startup.conf`, so the owner only double-clicks it. Check that image with
-`./scripts/check-installed-app.sh <dmg> --full`, and keep it on your own Mac,
-because it contains the files from the CD.
-
-### The one-time setup
-
-Both steps need an Apple Developer Program membership, which costs US$99 a
-year. Create a Developer ID Application certificate at
-[developer.apple.com](https://developer.apple.com/account/resources/certificates/list)
-and download it, then double-click it to put it in your keychain. Check that
-it arrived and copy its full name.
-
-```sh
-security find-identity -v -p codesigning
-```
-
-Then store the notarization credentials once. Apple asks for an app-specific
-password, which you make at [appleid.apple.com](https://appleid.apple.com)
-under Sign-In and Security.
-
-```sh
-xcrun notarytool store-credentials 'swchess-notary' \
-    --apple-id 'you@example.com' --team-id E85W63H34G \
-    --password 'abcd-efgh-ijkl-mnop'
-```
-
-### What Gatekeeper does
-
-| What you built | What a player's Mac does with it |
-| --- | --- |
-| An unsigned or ad-hoc signed download | Gatekeeper blocks the normal launch, because nothing identifies who published the app. |
-| Signed with Developer ID, not notarized | The signature names you, but Gatekeeper still refuses the launch without a notarization ticket. |
-| Signed and notarized | Gatekeeper checks the app and lets it open. The player may still confirm the first launch of a download. |
-| Signed, notarized and stapled | The ticket travels inside the disk image, so the launch works even when the Mac cannot reach Apple. |
-
-Do not tell players to right-click and choose Open. macOS Sequoia removed
-that way around the check.
-
-## Interpolated captures
-
-The original plays a capture at one pose every 120 milliseconds. The
-interpolation tool fills the gaps between poses with frames from
-[rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan), so a capture runs
-at 60 frames per second over its original duration.
-
-`tools/rife/build.sh` installs molten-vk and vulkan-headers, clones
-rife-ncnn-vulkan at a pinned commit, builds it for arm64, and puts the binary
-and the rife-v4.6 model under `.cache/rife/bin`. Run it once, then interpolate
-one capture and check what came out.
-
-```sh
-./tools/rife/build.sh
-python3 -m tools.interp --capture BBWB --assets assets \
-    --out assets/captures/BBWB/interp60
-python3 -m tools.interp --check assets/captures/BBWB/interp60
-```
-
-Repeat that for each name in `assets/captures`. All 72 captures cost about an
-hour of GPU time. To watch one at both cadences side by side, with frame
-stepping and a choice of background, use the viewer.
-
-```sh
-./build/swchess-viewer --cd original/win3x/cd --assets assets --review BBWB
-```
-
-The macOS app bundle built by `scripts/build-app.sh` carries `swchess-viewer`
-too, at `Contents/MacOS/swchess-viewer`, so review mode works from the bundle
-without a separate build tree.
+Star Wars is a trademark of Lucasfilm Ltd. This project is not affiliated with,
+authorized by or endorsed by Lucasfilm, Disney or The Software Toolworks.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
-| `assets/` | The extracted artwork, sounds and manifests, written by the extractor |
-| `cmake/` | Helper modules the top-level `CMakeLists.txt` includes |
+| `cmake/` | The dependency module and the MinGW-w64 toolchain file |
 | `docs/` | The plan and the research notes |
-| `original/` | Where your copy of the CD files goes |
-| `packaging/` | The `Info.plist`, the icon script and the release file lists |
-| `scripts/` | The bundle build and the fresh checkout check |
-| `src/` | The C++20 game, in the modules below |
-| `tests/` | Oracle tests that compare the C++ decoders against the Python ones |
+| `original/` | Where your copy of the CD goes. Git ignores it. |
+| `packaging/` | The `Info.plist`, the icon, the allow-list and the Windows resources |
+| `scripts/` | The bundle build, the signing, the notarization and the install check |
+| `src/` | The C++20 game and its two helper programs |
+| `tests/` | The oracle tests that compare the C++ decoders against the Python ones |
 | `tools/` | The Python extractor, interpolator, font tools and RIFE build |
-| `src/anim/` | Resolves capture timelines and plays poses, walks and interpolated frames |
-| `src/app/` | The `swchess` and `swchess-viewer` programs and the review screen |
+| `src/anim/` | Resolves capture timelines and plays poses, walks and generated frames |
+| `src/app/` | The `swchess` and `swchess-viewer` programs, the startup search and the review screen |
 | `src/assets/` | Decoders for ANX, BMP, WAV, NE resources, piece DLLs and INI files |
 | `src/audio/` | The SDL3 mixer and the cue scheduler |
-| `src/board/` | Square geometry, hit testing and piece placement for the four sets |
+| `src/board/` | Square projection, hit testing and piece placement for the four sets |
 | `src/chess/` | The rules, including castling, en passant, promotion, checkmate and draws |
-| `src/game/` | The session state machine and the move script runner |
+| `src/engine/` | The engine contract and the port of `CHESSAPP.EXE` under `original/` |
+| `src/export/` | `swchess-extract`, the C++ asset extractor |
+| `src/game/` | The session state machine, the button shell and the move script runner |
+| `src/interp/` | `swchess-interpolate`, the C++ RIFE driver |
+| `src/platform/` | The per-system settings, save and cache directories |
 | `src/render/` | The software compositor that both the window and the PPM dump draw through |
-| `src/save/` | The saved-game format |
+| `src/save/` | The `.CMG` reader and writer and the JSON save |
 | `src/text/` | The language tables and the two bitmap fonts |
-| `src/ui/` | Buttons, resource bitmaps and the settings the game keeps |
+| `src/ui/` | The button pages, the resource bitmaps and the settings |
 
-## Research notes
+`docs/research/` holds the details, one note per subsystem: `board-geometry.md`
+turns a square into a pixel and back, `capture-player.md` describes the film
+player decompiled from `XCHESS.EXE` with its timing and its sounds,
+`engine.md` covers `CHESSAPP.EXE`, `languages.md` maps the four string tables
+and both fonts, `menus.md` lists every screen, button and setting,
+`saved-games.md` documents the `.CMG` format, and the two `packaging-` notes
+cover shipping on each system.
 
-- `docs/research/board-geometry.md` turns a square into a screen pixel, and a
-  click back into a square, for each set.
-- `docs/research/capture-player.md` describes the capture player decompiled
-  from `XCHESS.EXE`, frame timing and sounds included.
-- `docs/research/languages.md` maps the four string tables and both fonts.
-- `docs/research/menus.md` lists every screen, every menu button, and every
-  setting the original keeps on disk.
-- `docs/research/saved-games.md` documents the `.CMG` saved-game format.
+## Credits
 
-## Legal
-
-The code in this repository is original work, and it reads the copy of the game
-that you own. The artwork, sounds and binaries of Star Wars Chess belong to
-Lucasfilm and Software Toolworks, and this repository never redistributes them.
+The Software Toolworks made the original game in 1993, and this port only moves
+their work to a machine that can still run it. nihui wrote
+[rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan) and converted the
+model this port interpolates with. hzwer and the rest of the RIFE team trained
+that model.
+Sam Lantinga and the SDL project supply the window, the input and the audio.
+Niels Lohmann's nlohmann-json reads and writes every manifest. The port was
+written with Claude Code.
