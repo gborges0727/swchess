@@ -14,8 +14,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
   endif()
-  enable_testing()
+  include(CTest)
 endif()
+
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 # The repo root, two directories above this one.
 get_filename_component(SWCHESS_TEXT_REPO_ROOT
@@ -33,7 +37,7 @@ if(NOT TARGET swchess_assets)
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/ne.cpp"
   )
   target_include_directories(swchess_text_assets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-  target_compile_options(swchess_text_assets PRIVATE -Wall -Wextra)
+  target_compile_options(swchess_text_assets PRIVATE ${SWCHESS_WARNINGS})
   set(SWCHESS_TEXT_ASSETS swchess_text_assets)
 else()
   set(SWCHESS_TEXT_ASSETS swchess_assets)
@@ -46,19 +50,22 @@ add_library(swchess_text STATIC
 # Headers include as "text/font.h", so the include root is src.
 target_include_directories(swchess_text PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_text PUBLIC ${SWCHESS_TEXT_ASSETS})
-target_compile_options(swchess_text PRIVATE -Wall -Wextra)
+target_compile_options(swchess_text PRIVATE ${SWCHESS_WARNINGS})
 
-add_executable(text_test text_test.cpp)
-target_link_libraries(text_test PRIVATE swchess_text)
-target_compile_options(text_test PRIVATE -Wall -Wextra)
+# The test reads the string tables and the two fonts from the CD.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(text_test text_test.cpp)
+  target_link_libraries(text_test PRIVATE swchess_text)
+  target_compile_options(text_test PRIVATE ${SWCHESS_WARNINGS})
 
-# The test checks its own layout against tools/fonts/legfont.py through
-# src/text/width_oracle.py. Without a Python interpreter it skips that one
-# check and runs the rest.
-if(NOT Python3_EXECUTABLE)
-  find_package(Python3 3.10 COMPONENTS Interpreter)
+  # The test checks its own layout against tools/fonts/legfont.py through
+  # src/text/width_oracle.py. Without a Python interpreter it skips that one
+  # check and runs the rest.
+  if(NOT Python3_EXECUTABLE)
+    find_package(Python3 3.10 COMPONENTS Interpreter)
+  endif()
+
+  add_test(NAME text_test COMMAND text_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}"
+           "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/width_oracle.py")
+  set_tests_properties(text_test PROPERTIES TIMEOUT 300)
 endif()
-
-add_test(NAME text_test COMMAND text_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}"
-         "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/width_oracle.py")
-set_tests_properties(text_test PROPERTIES TIMEOUT 300)

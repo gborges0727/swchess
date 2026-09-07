@@ -14,8 +14,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
   endif()
-  enable_testing()
+  include(CTest)
 endif()
+
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 # The repo root, two directories above this one.
 get_filename_component(SWCHESS_UI_REPO_ROOT
@@ -41,14 +45,17 @@ add_library(swchess_ui STATIC
 # Headers include as "ui/buttons.h", so the include root is src.
 target_include_directories(swchess_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_ui PUBLIC swchess_text)
-target_compile_options(swchess_ui PRIVATE -Wall -Wextra)
+target_compile_options(swchess_ui PRIVATE ${SWCHESS_WARNINGS})
 
-add_executable(ui_test ui_test.cpp)
-target_link_libraries(ui_test PRIVATE swchess_ui)
-target_compile_options(ui_test PRIVATE -Wall -Wextra)
+# The test draws the title screen and the buttons, which come off the CD.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(ui_test ui_test.cpp)
+  target_link_libraries(ui_test PRIVATE swchess_ui)
+  target_compile_options(ui_test PRIVATE ${SWCHESS_WARNINGS})
 
-# The test writes its PPM files here.
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ui")
+  # The test writes its PPM files here.
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ui")
 
-add_test(NAME ui_test COMMAND ui_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}/ui")
-set_tests_properties(ui_test PROPERTIES TIMEOUT 300)
+  add_test(NAME ui_test COMMAND ui_test "${SWCHESS_CD_DIR}" "${CMAKE_BINARY_DIR}/ui")
+  set_tests_properties(ui_test PROPERTIES TIMEOUT 300)
+endif()

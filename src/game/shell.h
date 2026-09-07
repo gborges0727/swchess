@@ -58,9 +58,8 @@ Settings sessionSettingsFor(const ShellOptions& options, const ui::Settings& ini
 // match the board even when the command line overrode the file.
 ui::Settings barSettingsFor(const Settings& live, const ui::Settings& ini);
 
-// The directory SWC.INI lives in, ~/Library/Application Support/Star Wars
-// Chess on macOS. It falls back to the working directory when there is no
-// home directory to build it from.
+// The directory SWC.INI lives in. swchess::platform::configDir() names it,
+// which is ~/Library/Application Support/Star Wars Chess on macOS.
 std::string defaultConfigDir();
 
 struct ShellOptions {
@@ -78,14 +77,15 @@ struct ShellOptions {
     std::optional<bool> walking;
     std::optional<bool> captures;
     anim::Cadence cadence = anim::Cadence::Interpolated60;
-    // Asks the player for a path. `save` is true for SAVE GAME and false for
-    // LOAD GAME. An empty answer cancels, and no callback at all leaves both
-    // buttons reporting that they have no chooser.
-    std::function<std::string(bool save)> chooseFile;
     // Builds the computer opponent. No callback makes the engine ported from
     // CHESSAPP.EXE. The tests pass makeRandomEngine here for a fixed seed.
     std::function<std::unique_ptr<engine::Engine>(const engine::Config&)> makeEngine;
 };
+
+// What the shell wants the window to ask the player for. The window opens the
+// dialog, because the shell owns no window and must not stop drawing while a
+// dialog stands in front of it.
+enum class FileRequest { None, Load, Save };
 
 // The engine level the play_level command id 460 to 464 stands for.
 engine::Level levelOfCommand(int command);
@@ -125,6 +125,17 @@ public:
     // and a running capture both swallow the key first, the way the original
     // does.
     bool onKey(char key, std::int64_t nowMs);
+
+    // The LOAD GAME and SAVE GAME buttons do not open a dialog themselves.
+    // They record what they want here, and the window asks for it. Call this
+    // once each time round the event loop. It answers None when nothing is
+    // waiting, and it forgets the request as it hands it over.
+    FileRequest takeFileRequest();
+
+    // The path the player picked in that dialog. An empty path means they
+    // cancelled, which leaves the game as it was. Call this from the event
+    // loop, not from the dialog callback.
+    void onFilePathChosen(const std::string& path);
 
     // Runs one menu command, the number WM_COMMAND carried.
     void runCommand(int command, std::int64_t nowMs);
@@ -183,7 +194,6 @@ private:
     void leaveDemoMode();
     // Puts a fresh hint into the status bar once the engine answers.
     void noteHint();
-    std::string chooseFile(bool save);
 
     ShellOptions options_;
     std::string settingsPath_;
@@ -196,6 +206,9 @@ private:
     int demoPlayers_ = ui::kNoCommand;
     // The hint count the bar has already shown.
     int hintShown_ = 0;
+    // The dialog the buttons asked for, and the one the window is showing now.
+    FileRequest fileRequest_ = FileRequest::None;
+    FileRequest filePending_ = FileRequest::None;
     std::unique_ptr<ui::TitleSequence> title_;
 
     ShellState state_ = ShellState::Title;

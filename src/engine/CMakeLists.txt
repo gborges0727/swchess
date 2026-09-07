@@ -13,12 +13,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
   endif()
-  enable_testing()
+  include(CTest)
 endif()
 
-# The top-level project calls include(CTest) after it adds this directory, so
-# testing is still off here. Turn it on so add_test below registers.
-enable_testing()
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 get_filename_component(SWCHESS_ENGINE_REPO_ROOT
                        "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
@@ -48,14 +48,17 @@ add_library(swchess_engine STATIC
 # Headers include as "engine/engine.h", so the include root is src.
 target_include_directories(swchess_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_engine PUBLIC swchess_chess)
-target_compile_options(swchess_engine PRIVATE -Wall -Wextra)
+target_compile_options(swchess_engine PRIVATE ${SWCHESS_WARNINGS})
 
 find_package(Threads REQUIRED)
 target_link_libraries(swchess_engine PUBLIC Threads::Threads)
 
-add_executable(engine_test engine_test.cpp)
-target_link_libraries(engine_test PRIVATE swchess_engine)
-target_compile_options(engine_test PRIVATE -Wall -Wextra)
+# The test plays the ported engine, which reads its opening book from the CD.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(engine_test engine_test.cpp)
+  target_link_libraries(engine_test PRIVATE swchess_engine)
+  target_compile_options(engine_test PRIVATE ${SWCHESS_WARNINGS})
 
-add_test(NAME engine_test COMMAND engine_test "${SWCHESS_CD_DIR}")
-set_tests_properties(engine_test PROPERTIES TIMEOUT 300)
+  add_test(NAME engine_test COMMAND engine_test "${SWCHESS_CD_DIR}")
+  set_tests_properties(engine_test PROPERTIES TIMEOUT 300)
+endif()

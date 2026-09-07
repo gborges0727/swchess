@@ -13,8 +13,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
   endif()
-  enable_testing()
+  include(CTest)
 endif()
+
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 # The repo root, two directories above this one.
 get_filename_component(SWCHESS_ANIM_REPO_ROOT
@@ -31,8 +35,16 @@ if(NOT SWCHESS_ASSETS_DIR)
 endif()
 
 # interp.cpp reads manifest.json, and png_read.cpp inflates the frame PNGs.
-find_package(nlohmann_json CONFIG REQUIRED)
-find_package(ZLIB REQUIRED)
+# The top level build already made both targets in cmake/Dependencies.cmake.
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  find_package(nlohmann_json CONFIG REQUIRED)
+endif()
+if(NOT TARGET ZLIB::ZLIB)
+  find_package(ZLIB REQUIRED)
+endif()
+
+# interp.cpp runs the frame work on several std::thread workers.
+find_package(Threads REQUIRED)
 
 # A standalone build has no swchess_assets target, so build the decoders it
 # needs from the same sources the top-level project uses.
@@ -47,7 +59,7 @@ if(NOT TARGET swchess_assets)
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/wav.cpp"
   )
   target_include_directories(swchess_assets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-  target_compile_options(swchess_assets PRIVATE -Wall -Wextra)
+  target_compile_options(swchess_assets PRIVATE ${SWCHESS_WARNINGS})
 endif()
 
 add_library(swchess_anim STATIC
@@ -60,19 +72,22 @@ add_library(swchess_anim STATIC
 # Headers include as "anim/capture.h", so the include root is src.
 target_include_directories(swchess_anim PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_anim PUBLIC swchess_assets nlohmann_json::nlohmann_json
-                      ZLIB::ZLIB)
-target_compile_options(swchess_anim PRIVATE -Wall -Wextra)
+                      ZLIB::ZLIB Threads::Threads)
+target_compile_options(swchess_anim PRIVATE ${SWCHESS_WARNINGS})
 
-add_executable(anim_test anim_test.cpp)
-target_link_libraries(anim_test PRIVATE swchess_anim)
-target_compile_options(anim_test PRIVATE -Wall -Wextra)
+# Both tests read the original CD, which a checkout does not carry.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(anim_test anim_test.cpp)
+  target_link_libraries(anim_test PRIVATE swchess_anim)
+  target_compile_options(anim_test PRIVATE ${SWCHESS_WARNINGS})
 
-add_test(NAME anim_test COMMAND anim_test "${SWCHESS_CD_DIR}" "${SWCHESS_ASSETS_DIR}")
-set_tests_properties(anim_test PROPERTIES TIMEOUT 300)
+  add_test(NAME anim_test COMMAND anim_test "${SWCHESS_CD_DIR}" "${SWCHESS_ASSETS_DIR}")
+  set_tests_properties(anim_test PROPERTIES TIMEOUT 300)
 
-add_executable(walk_test walk_test.cpp)
-target_link_libraries(walk_test PRIVATE swchess_anim)
-target_compile_options(walk_test PRIVATE -Wall -Wextra)
+  add_executable(walk_test walk_test.cpp)
+  target_link_libraries(walk_test PRIVATE swchess_anim)
+  target_compile_options(walk_test PRIVATE ${SWCHESS_WARNINGS})
 
-add_test(NAME walk_test COMMAND walk_test "${SWCHESS_CD_DIR}")
-set_tests_properties(walk_test PROPERTIES TIMEOUT 300)
+  add_test(NAME walk_test COMMAND walk_test "${SWCHESS_CD_DIR}")
+  set_tests_properties(walk_test PROPERTIES TIMEOUT 300)
+endif()

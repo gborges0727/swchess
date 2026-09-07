@@ -5,11 +5,16 @@
 //   swchess --cd original/win3x/cd --assets assets
 //   swchess --cd original/win3x/cd --skip-title --set WHTTOP --language german
 //   swchess --cd original/win3x/cd --load original/win3x/cd/STARWARS.CMG
-//   swchess --cd original/win3x/cd --assets assets --cadence original \
+//   swchess --cd original/win3x/cd --assets assets --cadence original
 //           --script "e2e4 d7d5 e4d5" --dump-at 3000 out.ppm
 //
-// --assets names the directory tools/interp writes its 60 frames per second
-// capture frames into. A capture that has them plays them, and one that does
+// --cd is optional in a window. Without it the game reads SWCHESS_CD, then
+// the configuration file swchess::app writes, and then asks the player for
+// the folder in a native chooser. A headless run has no chooser, so it needs
+// --cd or SWCHESS_CD and stops with a message when it has neither.
+//
+// --assets names the directory the decoded 60 frames per second capture
+// frames sit in. A capture that has them plays them, and one that does
 // not plays the authored poses at their original 120 ms cadence. --cadence
 // picks which of the two the game asks for. --config names the directory
 // SWC.INI lives in, and --skip-title opens the game screen straight away.
@@ -26,6 +31,9 @@
 // screen.
 
 #include <SDL3/SDL.h>
+// Windows starts a GUI program at WinMain. This header renames our main so
+// that SDL supplies the one Windows looks for.
+#include <SDL3/SDL_main.h>
 
 #include <cctype>
 #include <chrono>
@@ -34,6 +42,7 @@
 #include <exception>
 #include <string>
 
+#include "app/startup.h"
 #include "game/script.h"
 #include "game/session.h"
 #include "game/shell.h"
@@ -47,6 +56,8 @@ constexpr int kWindowHeight = swchess::game::kWindowHeight;
 struct Options {
     swchess::game::ShellOptions shell{};
     std::string script;
+    // True when the player asked for --help, which is not a failure.
+    bool helpOnly = false;
     std::int64_t dumpAtMs = -1;
     std::string dumpPath;
     // Which colours the engine plays in a --script run, and how far it goes.
@@ -91,7 +102,7 @@ bool parseLevel(const std::string& name, swchess::engine::Level* level) {
 
 void printUsage() {
     std::fprintf(stderr,
-                 "usage: swchess --cd <dir> [--assets <dir>] [--config <dir>]\n"
+                 "usage: swchess [--cd <dir>] [--assets <dir>] [--config <dir>]\n"
                  "                [--skip-title] [--load <file>] [--set <SET>]\n"
                  "                [--language <NAME>] [--cadence <NAME>]\n"
                  "                [--no-walking] [--no-captures]\n"
@@ -211,15 +222,12 @@ bool parseOptions(int argc, char** argv, Options& options) {
             options.dumpPath = path;
         } else if (arg == "-h" || arg == "--help") {
             printUsage();
+            options.helpOnly = true;
             return false;
         } else {
             std::fprintf(stderr, "unknown argument %s\n", arg.c_str());
             return false;
         }
-    }
-    if (options.shell.cdDir.empty()) {
-        printUsage();
-        return false;
     }
     return true;
 }
@@ -317,32 +325,41 @@ SDL_Texture* makeTexture(SDL_Renderer* renderer, int width, int height) {
     return texture;
 }
 
-// Asks the player for a file. macOS has a chooser in osascript, which prints
-// the path and needs no window of our own.
-std::string askForPath(bool save) {
-#ifdef __APPLE__
-    const char* command =
-        save ? "osascript -e 'POSIX path of (choose file name with prompt \"Save game\" "
-               "default name \"game.json\")' 2>/dev/null"
-             : "osascript -e 'POSIX path of (choose file with prompt \"Load game\")' 2>/dev/null";
-    std::FILE* pipe = popen(command, "r");
-    if (pipe == nullptr) {
-        return std::string();
+// What the SAVE GAME and LOAD GAME dialogs leave behind. SDL runs the
+// callback on the thread that pumps events, so the loop below reads these
+// fields without a lock.
+struct FileAnswer {
+    bool ready = false;
+    std::string path;
+};
+
+void SDLCALL filePicked(void* userdata, const char* const* files, int filter) {
+    (void)filter;
+    FileAnswer* answer = static_cast<FileAnswer*>(userdata);
+    answer->ready = true;
+    answer->path.clear();
+    if (files != nullptr && files[0] != nullptr) {
+        answer->path = files[0];
     }
-    std::string answer;
-    char buffer[512];
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        answer += buffer;
+    // A null list means SDL could not show the dialog, and an empty list means
+    // the player cancelled. Both leave the path empty, which the shell reads
+    // as "carry on with the game you have".
+}
+
+// Opens the native chooser and returns at once. The answer arrives in the
+// event loop, so the board keeps drawing behind the dialog.
+void openFileDialog(SDL_Window* window, swchess::game::FileRequest request, FileAnswer* answer) {
+    static const SDL_DialogFileFilter filters[] = {
+        {"Saved games", "json;cmg"},
+        {"All files", "*"},
+    };
+    answer->ready = false;
+    answer->path.clear();
+    if (request == swchess::game::FileRequest::Save) {
+        SDL_ShowSaveFileDialog(filePicked, answer, window, filters, 2, "game.json");
+    } else {
+        SDL_ShowOpenFileDialog(filePicked, answer, window, filters, 2, nullptr, false);
     }
-    pclose(pipe);
-    while (!answer.empty() && (answer.back() == '\n' || answer.back() == '\r')) {
-        answer.pop_back();
-    }
-    return answer;
-#else
-    (void)save;
-    return std::string();
-#endif
 }
 
 // The character the shell reads for one SDL key.
@@ -357,9 +374,6 @@ char shellKey(SDL_Keycode key) {
 }
 
 int runWindow(Options& options) {
-    options.shell.chooseFile = askForPath;
-    swchess::game::GameShell shell(options.shell);
-
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -381,6 +395,48 @@ int runWindow(Options& options) {
     SDL_SetRenderLogicalPresentation(renderer, kWindowWidth, kWindowHeight,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_Texture* screen = makeTexture(renderer, kWindowWidth, kWindowHeight);
+
+    // The window stands open before the game reads a single CD file, so the
+    // folder chooser has something to belong to and the player sees the
+    // program start.
+    swchess::app::StartupRequest request;
+    request.cdDir = options.shell.cdDir;
+    request.assetsDir = options.shell.assetsDir;
+    request.configDir = options.shell.configDir;
+    const swchess::app::StartupResult startup =
+        swchess::app::resolveStartup(request, window);
+    auto shutDown = [&]() {
+        if (screen != nullptr) {
+            SDL_DestroyTexture(screen);
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    };
+    if (startup.status == swchess::app::StartupStatus::Cancelled) {
+        shutDown();
+        return 0;
+    }
+    if (startup.status != swchess::app::StartupStatus::Ready) {
+        swchess::app::showStartupMessage(window, startup.message);
+        shutDown();
+        return 1;
+    }
+    options.shell.cdDir = startup.cdDir;
+    options.shell.assetsDir = startup.assetsDir;
+    if (startup.shouldSave) {
+        swchess::app::StartupConfig saved;
+        saved.cdDir = startup.cdDir;
+        saved.assetsDir = startup.assetsDir;
+        writeStartupConfig(swchess::app::startupConfigDir(request), saved);
+    }
+    // The native extractor is not written yet, so this returns at once and
+    // the game plays the authored poses at their original cadence.
+    swchess::app::offerExtraction(startup.cdDir, startup.assetsDir);
+
+    swchess::game::GameShell shell(options.shell);
+    FileAnswer fileAnswer;
+    bool dialogOpen = false;
 
     // Presentation follows the display refresh. The animation clock is this
     // monotonic one, and the shell reads nothing else.
@@ -419,6 +475,17 @@ int runWindow(Options& options) {
             }
         }
 
+        if (!dialogOpen) {
+            const swchess::game::FileRequest request = shell.takeFileRequest();
+            if (request != swchess::game::FileRequest::None) {
+                openFileDialog(window, request, &fileAnswer);
+                dialogOpen = true;
+            }
+        } else if (fileAnswer.ready) {
+            dialogOpen = false;
+            shell.onFilePathChosen(fileAnswer.path);
+        }
+
         shell.advance(animationMs());
         if (shell.takeMinimize()) {
             SDL_MinimizeWindow(window);
@@ -447,13 +514,27 @@ int runWindow(Options& options) {
         SDL_SetWindowTitle(window, title);
     }
 
-    if (screen != nullptr) {
-        SDL_DestroyTexture(screen);
-    }
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    shutDown();
     return 0;
+}
+
+// The --script and --dump-at runs draw into a file and never open a window,
+// so no chooser can ask them anything. They take the CD folder from the
+// command line, the environment or the saved configuration, and they stop
+// with a message when none of the three names one.
+bool resolveHeadless(Options& options) {
+    swchess::app::StartupRequest request;
+    request.cdDir = options.shell.cdDir;
+    request.assetsDir = options.shell.assetsDir;
+    request.configDir = options.shell.configDir;
+    const swchess::app::StartupResult startup = swchess::app::resolveWithoutAsking(request);
+    if (startup.status != swchess::app::StartupStatus::Ready) {
+        std::fprintf(stderr, "%s\n", startup.message.c_str());
+        return false;
+    }
+    options.shell.cdDir = startup.cdDir;
+    options.shell.assetsDir = startup.assetsDir;
+    return true;
 }
 
 }  // namespace
@@ -461,6 +542,10 @@ int runWindow(Options& options) {
 int main(int argc, char** argv) {
     Options options;
     if (!parseOptions(argc, argv, options)) {
+        return options.helpOnly ? 0 : 2;
+    }
+    const bool headless = !options.script.empty() || options.dumpAtMs >= 0;
+    if (headless && !resolveHeadless(options)) {
         return 2;
     }
     try {

@@ -11,8 +11,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
-  enable_testing()
+  include(CTest)
 endif()
+
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 get_filename_component(SWCHESS_BOARD_REPO_ROOT
                        "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
@@ -34,13 +38,13 @@ if(NOT TARGET swchess_assets)
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/wav.cpp"
   )
   target_include_directories(swchess_assets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-  target_compile_options(swchess_assets PRIVATE -Wall -Wextra)
+  target_compile_options(swchess_assets PRIVATE ${SWCHESS_WARNINGS})
 endif()
 if(NOT TARGET swchess_render)
   add_library(swchess_render STATIC "${CMAKE_CURRENT_SOURCE_DIR}/../render/compositor.cpp")
   target_include_directories(swchess_render PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
   target_link_libraries(swchess_render PUBLIC swchess_assets)
-  target_compile_options(swchess_render PRIVATE -Wall -Wextra)
+  target_compile_options(swchess_render PRIVATE ${SWCHESS_WARNINGS})
 endif()
 if(NOT TARGET swchess_chess)
   add_library(swchess_chess STATIC "${CMAKE_CURRENT_SOURCE_DIR}/../chess/chess.cpp")
@@ -55,14 +59,17 @@ add_library(swchess_board STATIC
 # Headers include as "board/geometry.h", so the include root is src.
 target_include_directories(swchess_board PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_board PUBLIC swchess_render swchess_chess)
-target_compile_options(swchess_board PRIVATE -Wall -Wextra)
+target_compile_options(swchess_board PRIVATE ${SWCHESS_WARNINGS})
 
-add_executable(board_test board_test.cpp)
-target_link_libraries(board_test PRIVATE swchess_board)
-target_compile_options(board_test PRIVATE -Wall -Wextra)
+# The test draws the real board, so it reads the original CD.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(board_test board_test.cpp)
+  target_link_libraries(board_test PRIVATE swchess_board)
+  target_compile_options(board_test PRIVATE ${SWCHESS_WARNINGS})
 
-add_test(NAME board_test COMMAND board_test "${SWCHESS_CD_DIR}")
-set_tests_properties(board_test PROPERTIES TIMEOUT 300)
+  add_test(NAME board_test COMMAND board_test "${SWCHESS_CD_DIR}")
+  set_tests_properties(board_test PROPERTIES TIMEOUT 300)
+endif()
 
 # The viewer draws a board, and this directory is added after that target
 # exists. The viewer already names swchess_render, and swchess_board brings

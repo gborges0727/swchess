@@ -97,7 +97,7 @@ add_test(NAME assets.totals
 # --dump-timeline output exactly. Skips itself if assets/ has not been
 # generated with `python3 -m tools.extract`.
 add_test(NAME timeline.parity
-         COMMAND python3 "${CMAKE_SOURCE_DIR}/tests/timeline_parity.py"
+         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/timeline_parity.py"
                  $<TARGET_FILE:swchess-viewer> "${CMAKE_SOURCE_DIR}/original/win3x/cd"
                  "${CMAKE_SOURCE_DIR}/assets")
 
@@ -107,3 +107,12 @@ add_executable(cdfs_test "${CMAKE_SOURCE_DIR}/src/assets/cdfs_test.cpp")
 target_include_directories(cdfs_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_options(cdfs_test PRIVATE -Wall -Wextra)
 add_test(NAME assets.cdfs COMMAND cdfs_test)
+
+# How startup picks the CD folder and the artwork folder. It builds its own
+# temporary directories and opens no dialog, so it needs no CD and no display.
+add_executable(startup_test "${CMAKE_SOURCE_DIR}/tests/startup_test.cpp"
+               "${CMAKE_SOURCE_DIR}/src/app/startup.cpp")
+target_include_directories(startup_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(startup_test PRIVATE swchess_platform SDL3::SDL3)
+target_compile_options(startup_test PRIVATE -Wall -Wextra)
+add_test(NAME app.startup COMMAND startup_test)

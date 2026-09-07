@@ -11,8 +11,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
-  enable_testing()
+  include(CTest)
 endif()
+
+# The warning flags for this compiler. A build of this module on its own does
+# not inherit them from the top level project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 get_filename_component(SWCHESS_SAVE_REPO_ROOT
                        "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
@@ -21,7 +25,9 @@ if(NOT SWCHESS_CD_DIR)
   set(SWCHESS_CD_DIR "${SWCHESS_SAVE_REPO_ROOT}/original/win3x/cd")
 endif()
 
-find_package(nlohmann_json CONFIG REQUIRED)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  find_package(nlohmann_json CONFIG REQUIRED)
+endif()
 
 # A standalone build has no rules module target, so build it from the same
 # source the top level project uses.
@@ -35,11 +41,14 @@ add_library(swchess_save STATIC cmg.cpp native.cpp)
 # Headers include as "save/cmg.h", so the include root is src.
 target_include_directories(swchess_save PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_save PUBLIC swchess_chess nlohmann_json::nlohmann_json)
-target_compile_options(swchess_save PRIVATE -Wall -Wextra)
+target_compile_options(swchess_save PRIVATE ${SWCHESS_WARNINGS})
 
-add_executable(save_test save_test.cpp)
-target_link_libraries(save_test PRIVATE swchess_save)
-target_compile_options(save_test PRIVATE -Wall -Wextra)
+# The test reads STARWARS.CMG, the saved game shipped on the CD.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
+  add_executable(save_test save_test.cpp)
+  target_link_libraries(save_test PRIVATE swchess_save)
+  target_compile_options(save_test PRIVATE ${SWCHESS_WARNINGS})
 
-add_test(NAME save_test COMMAND save_test "${SWCHESS_CD_DIR}")
-set_tests_properties(save_test PROPERTIES TIMEOUT 120)
+  add_test(NAME save_test COMMAND save_test "${SWCHESS_CD_DIR}")
+  set_tests_properties(save_test PROPERTIES TIMEOUT 120)
+endif()
