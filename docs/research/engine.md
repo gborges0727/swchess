@@ -330,10 +330,15 @@ factory table:
 | File | Pawn | Knight | Bishop | Rook | Queen |
 | --- | --- | --- | --- | --- | --- |
 | NEWCOMER.CMP | 426 | 818 | 1123 | 2830 | 4770 |
+| NOVICE.CMP | 426 | 1213 | 1405 | 2461 | 4378 |
+| MODERATE.CMP | 373 | 1143 | 1230 | 1797 | 3455 |
+| HARD.CMP | 256 | 720 | 780 | 1168 | 2304 |
 | EXPERT.CMP | 256 | 784 | 844 | 1232 | 2368 |
 
 Newcomer rates a rook above two bishops and a queen at eleven pawns, which is
-how a beginner counts. Kamikaze is the one level that rates the two sides
+how a beginner counts. Kamikaze is the only level that rates its own pieces
+below the factory table, because its piece-against-pawn setting of 0 takes 64
+off each of them. Kamikaze is the one level that rates the two sides
 differently. It puts its opponent's pieces above its own, so it gives material
 away.
 
