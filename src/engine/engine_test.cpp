@@ -361,6 +361,29 @@ void testOriginalEngineAnswersInBudget() {
     check(took < 2000, "the engine answers inside the level's budget");
 }
 
+void testOriginalEngineHonoursTheBudget() {
+    // NEWCOMER.CMP asks for depth 3 and holds 0 in its seconds-per-move
+    // field, so the port gives that level a one second budget. From a
+    // position the book never reaches, the answer must land inside it.
+    swchess::engine::Config config;
+    config.cdDir = cdDir;
+    config.level = Level::Newcomer;
+    auto engine = swchess::engine::makeOriginalEngine(config);
+
+    const Position position = *Position::fromFen(
+        "r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1B3/PPP2PPP/R2Q1RK1 w - - 0 1");
+    Move answer{};
+    bool got = false;
+    engine->requestMove(position, 21, [&](RequestId, Move m) {
+        answer = m;
+        got = true;
+    });
+    const long took = waitForAnswer(*engine, got, 5000);
+    check(took >= 0, "the engine answers off the book");
+    check(took < 2500, "the engine answers inside the Newcomer budget");
+    check(isLegal(position, answer), "the off-book answer is legal");
+}
+
 void testOriginalEngineEveryMoveIsLegal() {
     // Plays both sides of a middlegame the book never reaches, so every
     // answer comes out of the search, and checks each one against the rules
@@ -427,6 +450,46 @@ void testOriginalEngineForceIsPrompt() {
     check(isLegal(position, answer), "forceMove returns a legal move");
 }
 
+void testOriginalEngineForceBeforeThePickup() {
+    // A force that lands before the worker has taken the job must still stop
+    // the search, not be cleared when the worker starts.
+    swchess::engine::Config config;
+    config.cdDir = cdDir;
+    config.level = Level::Expert;
+    auto engine = swchess::engine::makeOriginalEngine(config);
+
+    const Position position = *Position::fromFen(
+        "r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1B3/PPP2PPP/R2Q1RK1 w - - 0 1");
+    Move answer{};
+    bool got = false;
+    const auto start = std::chrono::steady_clock::now();
+    engine->requestMove(position, 78, [&](RequestId, Move m) {
+        answer = m;
+        got = true;
+    });
+    engine->forceMove();
+    const long took = waitForAnswer(*engine, got, 4000);
+    const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    check(took >= 0, "an immediate forceMove still makes the engine answer");
+    check(since.count() < 2000, "an immediate forceMove answers promptly");
+    check(isLegal(position, answer), "an immediate forceMove returns a legal move");
+}
+
+void testOriginalEngineNoLegalMove() {
+    // Black is stalemated, so there is no move to answer with. The engine
+    // must drop the request instead of calling back with nothing.
+    swchess::engine::Config config;
+    config.cdDir = cdDir;
+    auto engine = swchess::engine::makeOriginalEngine(config);
+    const Position position = *Position::fromFen("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1");
+    check(position.legalMoves().empty(), "the stalemate position has no legal move");
+    bool got = false;
+    engine->requestMove(position, 99, [&](RequestId, Move) { got = true; });
+    const long took = waitForAnswer(*engine, got, 800);
+    check(took < 0, "the engine answers nothing when no move is legal");
+}
+
 void testOriginalEngineHint() {
     swchess::engine::Config config;
     config.cdDir = cdDir;
@@ -487,8 +550,11 @@ int main(int argc, char** argv) {
         testSearchFindsMateInOne();
         testSearchStops();
         testOriginalEngineAnswersInBudget();
+        testOriginalEngineHonoursTheBudget();
         testOriginalEngineEveryMoveIsLegal();
         testOriginalEngineForceIsPrompt();
+        testOriginalEngineForceBeforeThePickup();
+        testOriginalEngineNoLegalMove();
         testOriginalEngineHint();
         testOriginalEngineLevels();
     } else {

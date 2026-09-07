@@ -100,7 +100,13 @@ public:
         return level_;
     }
 
-    void forceMove() override { stop_.store(true, std::memory_order_relaxed); }
+    void forceMove() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // The flag also covers a force that lands before the worker has
+        // picked the job up, which would otherwise be cleared by the worker.
+        forced_ = true;
+        stop_.store(true, std::memory_order_relaxed);
+    }
 
     void poll() override {
         chess::MoveCallback done;
@@ -131,6 +137,7 @@ private:
             done_ = std::move(done);
             answer_.reset();
             cancelled_ = false;
+            forced_ = false;
             useBook_ = useBook;
             hasJob_ = true;
         }
@@ -150,7 +157,7 @@ private:
                 position = pending_;
                 personality = personality_;
                 useBook = useBook_;
-                stop_.store(false, std::memory_order_relaxed);
+                stop_.store(forced_, std::memory_order_relaxed);
             }
 
             std::optional<chess::Move> chosen;
@@ -165,6 +172,12 @@ private:
             // A cancel or a newer request while the search ran throws this
             // answer away.
             if (cancelled_ || hasJob_ || !done_) continue;
+            if (!chosen) {
+                // The position has no legal move, so there is nothing to
+                // answer with. Drop the request rather than hold it open.
+                done_ = {};
+                continue;
+            }
             answer_ = chosen;
         }
     }
@@ -183,6 +196,7 @@ private:
     bool hasJob_{false};
     bool quitting_{false};
     bool cancelled_{false};
+    bool forced_{false};
     bool useBook_{true};
     chess::Position pending_{};
     chess::RequestId jobId_{0};

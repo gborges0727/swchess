@@ -180,9 +180,9 @@ int Searcher::alphaBeta(const chess::Position& position, int depth, int ply, int
     }
 
     // A side in check gets one more ply, so the search does not stop in the
-    // middle of a forcing line.
-    const bool inCheck = position.inCheck();
-    if (inCheck) ++depth;
+    // middle of a forcing line. The extension stops at PLYMAX, or a
+    // perpetual check would extend the line without end.
+    if (position.inCheck() && ply < kPlyMax) ++depth;
 
     if (depth <= 0) return quiescence(position, ply, alpha, beta);
 
