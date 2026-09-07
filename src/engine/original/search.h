@@ -40,6 +40,11 @@ class Searcher {
 public:
     explicit Searcher(const StyleWeights& style);
 
+    // Swaps in another level's weights. The caller keeps one Searcher for
+    // the life of the engine, because the transposition table it owns is
+    // several megabytes and reallocating it per move is wasted work.
+    void setStyle(const StyleWeights& style) { style_ = style; }
+
     // Searches until the depth or the clock runs out, or until `stop` turns
     // true. Answers with the best move from the deepest finished iteration.
     // Returns hasMove == false only when the position has no legal move.

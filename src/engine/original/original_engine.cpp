@@ -26,6 +26,7 @@ namespace {
 
 using original::Book;
 using original::Personality;
+using original::StyleWeights;
 using original::SearchLimits;
 using original::Searcher;
 using original::SearchResult;
@@ -163,8 +164,8 @@ private:
             std::optional<chess::Move> chosen;
             if (useBook) chosen = book_.pick(position, bookRandom_);
             if (!chosen) {
-                Searcher searcher(personality.primary);
-                const SearchResult found = searcher.run(position, limitsFor(personality), stop_);
+                searcher_.setStyle(personality.primary);
+                const SearchResult found = searcher_.run(position, limitsFor(personality), stop_);
                 if (found.hasMove) chosen = found.move;
             }
 
@@ -191,6 +192,8 @@ private:
     Level level_;
     Book book_;
     Personality personality_;
+    // The worker thread owns this. Nothing else touches it.
+    Searcher searcher_{StyleWeights{}};
     std::uint32_t bookRandom_{0x1993u};
 
     bool hasJob_{false};
