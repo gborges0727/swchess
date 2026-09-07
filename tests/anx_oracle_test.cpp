@@ -8,7 +8,6 @@
 //   anx_oracle_test <oracle.txt> <cd dir> bmp <NAME.BMP>
 //   anx_oracle_test <oracle.txt> <cd dir> totals <records> <timeline>
 
-#include <CommonCrypto/CommonDigest.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -21,17 +20,12 @@
 
 #include "assets/anx.h"
 #include "assets/bmp.h"
+#include "export/sha256.h"
 
 namespace {
 
 std::string sha256Hex(const std::uint8_t* bytes, std::size_t length) {
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(bytes, static_cast<CC_LONG>(length), digest);
-    char text[CC_SHA256_DIGEST_LENGTH * 2 + 1];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) {
-        std::snprintf(text + i * 2, 3, "%02x", digest[i]);
-    }
-    return std::string(text, CC_SHA256_DIGEST_LENGTH * 2);
+    return swchess::exporter::sha256Hex(bytes, length);
 }
 
 std::vector<std::string> readOracle(const std::string& path, const std::string& prefix) {

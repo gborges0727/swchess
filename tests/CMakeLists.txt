@@ -20,7 +20,7 @@ add_custom_command(
 add_custom_target(anx_oracle ALL DEPENDS "${SWCHESS_ORACLE}")
 
 add_executable(anx_oracle_test anx_oracle_test.cpp)
-target_link_libraries(anx_oracle_test PRIVATE swchess_assets)
+target_link_libraries(anx_oracle_test PRIVATE swchess_assets swchess_export)
 target_compile_options(anx_oracle_test PRIVATE -Wall -Wextra)
 add_dependencies(anx_oracle_test anx_oracle)
 
