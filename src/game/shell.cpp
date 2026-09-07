@@ -30,6 +30,9 @@ constexpr int kIdAllMovesReplayed = 2080;
 constexpr int kIdAllMovesTakenBack = 2081;
 constexpr int kIdCannotRemoveKing = 2057;
 constexpr int kIdComputersTurn = 2123;
+constexpr int kIdNotYourTurn = 33028;
+// The HINT button's own label, which the bar shows in front of the move.
+constexpr int kIdHintLabel = 40;
 constexpr int kIdNoDraw = 2149;
 constexpr int kIdNoPieceThere = 33026;
 constexpr int kIdOpponentsPiece = 33027;
@@ -45,6 +48,10 @@ constexpr int kIdIllegalPawn = 33062;
 
 // The four look and feel toggles sit on page 7, each in its own slot.
 constexpr int kTogglePage = 7;
+// The three SELECT PLAYERS buttons sit on page 6 and the five play level
+// buttons on page 9.
+constexpr int kPlayersPage = 6;
+constexpr int kLevelPage = 9;
 
 std::string joinPath(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -103,6 +110,18 @@ int refusedMoveId(const chess::Position& position, chess::Square from, chess::Sq
 }
 
 }  // namespace
+
+engine::Level levelOfCommand(int command) {
+    int index = command - cmd::kLevelNewcomer;
+    if (index < 0 || index > 4) {
+        index = 0;
+    }
+    return static_cast<engine::Level>(index);
+}
+
+int commandOfLevel(engine::Level level) {
+    return cmd::kLevelNewcomer + static_cast<int>(level);
+}
 
 const char* shellStateName(ShellState state) {
     switch (state) {
@@ -196,6 +215,14 @@ GameShell::GameShell(const ShellOptions& options)
     bar_ = std::make_unique<ui::ButtonBar>(options_.cdDir, live.language, ini_);
     applySoundSettings();
 
+    engine::Config engineConfig;
+    engineConfig.cdDir = options_.cdDir;
+    engineConfig.level = levelOfCommand(ini_.playLevel);
+    engine_ = options_.makeEngine ? options_.makeEngine(engineConfig)
+                                  : engine::makeRandomEngine(engineConfig);
+    session_.setEngine(engine_.get());
+    applyPlayers(bar_->players());
+
     state_ = options_.skipTitle ? ShellState::Playing : ShellState::Title;
     if (state_ == ShellState::Title) {
         title_ = std::make_unique<ui::TitleSequence>(options_.cdDir, live.language);
@@ -258,6 +285,7 @@ void GameShell::advance(std::int64_t nowMs) {
         return;
     }
     session_.advance(nowMs_);
+    noteHint();
     refreshStatus();
 }
 
@@ -353,7 +381,52 @@ void GameShell::refreshStatus() {
         lastFen_ = fen;
         message_.clear();
     }
+    if (message_.empty() && session_.engineThinking()) {
+        // The engine holds the move, so the bar says so until it answers.
+        bar_->setMessageBytes(session_.stringBytes(kIdComputersTurn));
+        return;
+    }
     bar_->setMessageBytes(message_.empty() ? session_.statusBytes() : message_);
+}
+
+void GameShell::noteHint() {
+    if (session_.hintSerial() == hintShown_) {
+        return;
+    }
+    hintShown_ = session_.hintSerial();
+    const std::optional<chess::Move>& move = session_.hintMove();
+    if (!move.has_value()) {
+        return;
+    }
+    // The original wrote the suggested move into the status bar. This writes
+    // the same move in front of the button's own label, and the session
+    // outlines the two squares for two seconds.
+    std::string text = session_.stringBytes(kIdHintLabel);
+    if (!text.empty()) {
+        text += " ";
+    }
+    text += session_.position().longAlgebraic(*move);
+    setMessageBytes(std::move(text));
+}
+
+void GameShell::applyPlayers(int command) {
+    // HUMAN VS. COMPUTER seats the person on White. menus.md records no key
+    // and no button for the other way round, so White is the default side.
+    const Seat white = command == cmd::kComputerComputer ? Seat::Computer : Seat::Human;
+    const Seat black = command == cmd::kHumanHuman ? Seat::Human : Seat::Computer;
+    session_.cancelRequests();
+    session_.setSeat(chess::Color::White, white);
+    session_.setSeat(chess::Color::Black, black);
+}
+
+void GameShell::leaveDemoMode() {
+    if (demoPlayers_ == ui::kNoCommand) {
+        return;
+    }
+    const int previous = demoPlayers_;
+    demoPlayers_ = ui::kNoCommand;
+    bar_->setPlayers(previous);
+    applyPlayers(previous);
 }
 
 void GameShell::startCredits(std::int64_t nowMs) {
@@ -472,6 +545,8 @@ bool GameShell::onKey(char key, std::int64_t nowMs) {
 }
 
 bool GameShell::boardClick(int x, int y, std::int64_t nowMs) {
+    // A click on the board ends the demo, the way it did in the original.
+    leaveDemoMode();
     if (session_.state() == AnimState::Idle) {
         const std::optional<chess::Square> square =
             board::hitTest(session_.scene().geometry, x, y);
@@ -486,6 +561,10 @@ bool GameShell::boardClick(int x, int y, std::int64_t nowMs) {
 
 void GameShell::noteRefusedClick(chess::Square square) {
     const chess::Position& position = session_.position();
+    if (session_.engineToMove()) {
+        setMessageId(kIdNotYourTurn);
+        return;
+    }
     const std::optional<chess::Square> selected = session_.selection();
     if (selected.has_value() && !(*selected == square)) {
         for (const chess::Move& move : position.legalMoves()) {
@@ -553,12 +632,45 @@ void GameShell::runCommand(int command, std::int64_t nowMs) {
         refreshStatus();
         return;
     }
+    if (command != cmd::kDemoMode) {
+        // Any other button ends the demo before it runs.
+        leaveDemoMode();
+    }
 
     switch (command) {
         case cmd::kNewGame:
         case cmd::kSetupNew:
             session_.newGame();
             message_.clear();
+            break;
+        case cmd::kDemoMode:
+            if (demoPlayers_ == ui::kNoCommand) {
+                demoPlayers_ = bar_->players();
+                bar_->setPlayers(cmd::kComputerComputer);
+                applyPlayers(cmd::kComputerComputer);
+            }
+            setMessageId(kIdComputersTurn);
+            break;
+        case cmd::kForceMove:
+            if (session_.engineToMove()) {
+                session_.forceEngineMove();
+            } else {
+                // The engine takes over the colour the player was about to
+                // move, which is what FORCE MOVE did in the original. The
+                // player keeps the other colour.
+                const chess::Color side = session_.position().sideToMove();
+                session_.setSeat(side, Seat::Computer);
+                session_.setSeat(chess::opposite(side), Seat::Human);
+                session_.forceEngineMove();
+            }
+            setMessageId(kIdComputersTurn);
+            break;
+        case cmd::kHint:
+            if (!session_.requestHint()) {
+                setMessageId(session_.engineToMove() ? kIdComputersTurn : kIdHintLabel);
+            } else {
+                setMessageId(kIdHintLabel);
+            }
             break;
         case cmd::kLoadGame: {
             const std::string path = chooseFile(false);
@@ -680,18 +792,20 @@ void GameShell::runCommand(int command, std::int64_t nowMs) {
         case cmd::kMinimize:
             minimize_ = true;
             break;
-        case cmd::kDemoMode:
-        case cmd::kForceMove:
-        case cmd::kHint:
-            setMessageId(kIdComputersTurn);
+        case cmd::kHumanComputer:
+        case cmd::kHumanHuman:
+        case cmd::kComputerComputer:
+            applyPlayers(command);
+            setMessageId(bar_->statusIdFor(kPlayersPage, command - cmd::kHumanComputer));
             break;
         default:
-            if ((command >= cmd::kLevelNewcomer && command <= cmd::kLevelExpert) ||
-                command == cmd::kHumanComputer || command == cmd::kHumanHuman ||
-                command == cmd::kComputerComputer) {
-                // The port has no engine yet. The button keeps the setting and
-                // the bar says whose turn it would be.
-                setMessageId(kIdComputersTurn);
+            if (command >= cmd::kLevelNewcomer && command <= cmd::kLevelExpert) {
+                // The bar already wrote the id into settings_.playLevel, and
+                // SAVE SETTINGS is what puts it in SWC.INI.
+                if (engine_ != nullptr) {
+                    engine_->setLevel(levelOfCommand(command));
+                }
+                setMessageId(bar_->statusIdFor(kLevelPage, command - cmd::kLevelNewcomer));
             }
             break;
     }
@@ -744,6 +858,7 @@ bool GameShell::loadGameFile(const std::string& path) {
             return false;
         }
         session_.setGame(read->game);
+        session_.cancelRequests();
         refreshStatus();
         return true;
     }
@@ -759,6 +874,7 @@ bool GameShell::loadGameFile(const std::string& path) {
         return false;
     }
     session_.setGame(*game);
+    session_.cancelRequests();
 
     // A native file carries the settings the game was saved under.
     ini_.walking = read->settings.walking ? 1 : 0;

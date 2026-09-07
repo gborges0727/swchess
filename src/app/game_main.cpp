@@ -49,7 +49,45 @@ struct Options {
     std::string script;
     std::int64_t dumpAtMs = -1;
     std::string dumpPath;
+    // Which colours the engine plays in a --script run, and how far it goes.
+    swchess::game::Seat whiteSeat = swchess::game::Seat::Human;
+    swchess::game::Seat blackSeat = swchess::game::Seat::Human;
+    swchess::engine::Level level = swchess::engine::Level::Newcomer;
+    int enginePlies = -1;
 };
+
+// Reads "human-computer", "human-human" or "computer-computer".
+bool parsePlayers(const std::string& name, swchess::game::Seat* white,
+                  swchess::game::Seat* black) {
+    using swchess::game::Seat;
+    if (name == "human-human") {
+        *white = Seat::Human;
+        *black = Seat::Human;
+    } else if (name == "human-computer") {
+        *white = Seat::Human;
+        *black = Seat::Computer;
+    } else if (name == "computer-human") {
+        *white = Seat::Computer;
+        *black = Seat::Human;
+    } else if (name == "computer-computer") {
+        *white = Seat::Computer;
+        *black = Seat::Computer;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parseLevel(const std::string& name, swchess::engine::Level* level) {
+    using swchess::engine::Level;
+    if (name == "newcomer") *level = Level::Newcomer;
+    else if (name == "novice") *level = Level::Novice;
+    else if (name == "moderate") *level = Level::Moderate;
+    else if (name == "hard") *level = Level::Hard;
+    else if (name == "expert") *level = Level::Expert;
+    else return false;
+    return true;
+}
 
 void printUsage() {
     std::fprintf(stderr,
@@ -59,6 +97,11 @@ void printUsage() {
                  "                [--no-walking] [--no-captures]\n"
                  "       swchess --cd <dir> --script \"e2e4 e7e5\" "
                  "--dump-at <MS> <out.ppm>\n"
+                 "                [--players <PAIR>] [--level <NAME>] "
+                 "[--engine-plies <N>]\n"
+                 "       a pair is human-human, human-computer, computer-human\n"
+                 "         or computer-computer\n"
+                 "       a level is newcomer, novice, moderate, hard or expert\n"
                  "       a set is WHTBTM, WHTTOP, FACING or 2D\n"
                  "       a language is english, french, german or spanish\n"
                  "       a cadence is original or interpolated\n");
@@ -141,6 +184,24 @@ bool parseOptions(int argc, char** argv, Options& options) {
             const char* value = next("--script");
             if (value == nullptr) return false;
             options.script = value;
+        } else if (arg == "--players") {
+            const char* value = next("--players");
+            if (value == nullptr) return false;
+            if (!parsePlayers(value, &options.whiteSeat, &options.blackSeat)) {
+                std::fprintf(stderr, "unknown player pairing %s\n", value);
+                return false;
+            }
+        } else if (arg == "--level") {
+            const char* value = next("--level");
+            if (value == nullptr) return false;
+            if (!parseLevel(value, &options.level)) {
+                std::fprintf(stderr, "unknown play level %s\n", value);
+                return false;
+            }
+        } else if (arg == "--engine-plies") {
+            const char* number = next("--engine-plies");
+            if (number == nullptr) return false;
+            options.enginePlies = std::atoi(number);
         } else if (arg == "--dump-at") {
             const char* number = next("--dump-at");
             if (number == nullptr) return false;
@@ -178,6 +239,10 @@ int runScript(const Options& options) {
     script.assetsDir = options.shell.assetsDir;
     script.settings = settings;
     script.moves = swchess::game::splitScript(options.script);
+    script.whiteSeat = options.whiteSeat;
+    script.blackSeat = options.blackSeat;
+    script.level = options.level;
+    script.enginePlies = options.enginePlies;
     script.dumpAtMs = options.dumpAtMs;
     script.dumpPath = options.dumpPath;
     script.decorate = [&bar](swchess::game::GameSession& session, swchess::Image& picture) {
@@ -195,6 +260,13 @@ int runScript(const Options& options) {
     std::printf("played %zu moves, ended at %lld ms, state %s\n", result.played.size(),
                 static_cast<long long>(result.endedMs),
                 swchess::game::animStateName(result.states.back().state));
+    if (result.engineStalled) {
+        std::fprintf(stderr, "the engine never answered its request\n");
+        return 1;
+    }
+    for (const std::string& move : result.engineMoves) {
+        std::printf("engine played %s\n", move.c_str());
+    }
     std::printf("fen %s\n", result.finalFen.c_str());
     for (const auto& [name, count] : result.soundPlays) {
         std::printf("sound %s played %d\n", name.c_str(), count);

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "assets/bmp.h"
+#include "engine/engine.h"
 #include "game/session.h"
 
 namespace swchess::game {
@@ -30,8 +31,22 @@ struct ScriptOptions {
     // Where the interpolated capture frames live, empty for none.
     std::string assetsDir;
     Settings settings{};
-    // Moves in long algebraic, such as "e2e4" or "e7e8q".
+    // Moves in long algebraic, such as "e2e4" or "e7e8q". The runner clicks
+    // them for whichever colour a person is playing, and skips its turn when
+    // the engine holds the move.
     std::vector<std::string> moves;
+    // Who plays each colour. A computer seat builds the random engine.
+    Seat whiteSeat = Seat::Human;
+    Seat blackSeat = Seat::Human;
+    engine::Level level = engine::Level::Newcomer;
+    std::uint32_t engineSeed = 1;
+    // How many moves the engine may play before both seats go back to a
+    // person. A negative number lets it play until the game ends.
+    int enginePlies = -1;
+    // How long to wait on one engine answer, in real milliseconds. The
+    // animation clock stands still while the engine thinks, because thinking
+    // is not something the board draws.
+    std::int64_t engineWaitMs = 10000;
     std::int64_t dumpAtMs = -1;  // negative composites nothing
     std::string dumpPath;        // empty writes no file
     std::int64_t stepMs = 10;
@@ -48,7 +63,11 @@ struct ScriptOptions {
 
 struct ScriptResult {
     std::vector<StateSample> states;  // one entry per state change, in order
-    std::vector<std::string> played;  // the moves the rules module accepted
+    std::vector<std::string> played;  // the script moves the rules module accepted
+    // The moves the engine played, in long algebraic and in order.
+    std::vector<std::string> engineMoves;
+    // True when the engine held a request past engineWaitMs without answering.
+    bool engineStalled = false;
     std::string rejected;             // the first move it would not take
     std::string finalFen;
     std::map<std::string, int> soundPlays;

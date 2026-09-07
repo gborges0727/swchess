@@ -28,6 +28,7 @@
 #include "audio/audio.h"
 #include "board/board_view.h"
 #include "chess.h"
+#include "engine/engine.h"
 #include "text/font.h"
 #include "text/strings.h"
 
@@ -42,6 +43,11 @@ namespace swchess::game {
 enum class AnimState { Idle, Walking, Capturing, Promoting, GameOver };
 
 const char* animStateName(AnimState state);
+
+// Who plays one colour. The three SELECT PLAYERS buttons pick the pair.
+enum class Seat { Human, Computer };
+
+const char* seatName(Seat seat);
 
 // What the player picked, all of it changeable while the game runs.
 struct Settings {
@@ -100,6 +106,43 @@ public:
     void newGame();
     // Takes back the last move. It does nothing while an animation runs.
     bool undo();
+
+    // Hands the session the engine that fills its computer seats. The caller
+    // owns the engine and must keep it alive. Passing null takes it away.
+    void setEngine(engine::Engine* engine);
+    engine::Engine* engine() const { return engine_; }
+
+    // Who plays each colour. Both start out Human.
+    void setSeat(chess::Color color, Seat seat);
+    Seat seat(chess::Color color) const { return seats_[static_cast<int>(color)]; }
+    // True when the side to move sits in a computer seat.
+    bool engineToMove() const;
+    // True while the engine holds an unanswered move request.
+    bool engineThinking() const { return thinking_; }
+
+    // Drops the open move request and any hint. New Game, a load, a take back
+    // and a change of seats all call it, so an answer computed for a position
+    // the session has left cannot land on the board.
+    void cancelRequests();
+
+    // Answers the open engine move request now. This is the FORCE button.
+    // Returns false when the engine holds no request.
+    bool forceEngineMove();
+
+    // Asks the engine what it would play here without playing it. The answer
+    // arrives in a later advance() and stays for two seconds. Returns false
+    // when there is no engine, when the game is over, or when the engine is
+    // already thinking about its own move.
+    bool requestHint();
+
+    // The move the last hint named, while its two seconds are still running.
+    const std::optional<chess::Move>& hintMove() const { return hintMove_; }
+    // Counts the hints the engine has answered, so a caller can spot a new
+    // one without polling the move itself.
+    int hintSerial() const { return hintSerial_; }
+
+    // How many moves the engine has played into the game on the board.
+    int engineMoveCount() const { return engineMoves_; }
 
     // Puts a whole game on the board, which is how a loaded file arrives. It
     // stops any animation and shows the position the game stands at.
@@ -187,6 +230,17 @@ private:
         int toDepth = 0;
     };
 
+    // The animation half of advance(), which the engine half runs after.
+    void advanceAnimation(std::int64_t nowMs);
+    // Polls the engine, plays whatever it answered, and opens the next
+    // request when the side to move has none.
+    void updateEngine(std::int64_t nowMs);
+    void startRequest();
+    chess::MoveProvider* providerFor(chess::Color color);
+    // Hands a clicked move to the human provider, which answers it straight
+    // back and starts the animation.
+    bool submitHumanMove(chess::Move move, std::int64_t nowMs);
+
     void rebuildScene();
     // Swaps in the background bitmap settings_.background names.
     void applyBackground();
@@ -253,6 +307,30 @@ private:
     std::future<std::optional<anim::InterpSequence>> interpLoad_;
     bool interpLoading_ = false;
     bool waitForInterp_ = false;
+
+    // The two seats and the two providers behind them. The human provider
+    // holds the open request while a person is to move, and the engine holds
+    // it while the computer is.
+    std::array<Seat, 2> seats_{Seat::Human, Seat::Human};
+    engine::Engine* engine_ = nullptr;
+    chess::HumanMoveProvider human_;
+    chess::RequestId nextRequestId_ = 1;
+    chess::RequestId request_ = 0;   // the open move request
+    chess::RequestId hintRequest_ = 0;
+    bool requestOpen_ = false;
+    bool thinking_ = false;
+    bool hintOpen_ = false;
+    // The move the engine answered with, played on the next advance so a
+    // callback never starts an animation from inside poll().
+    std::optional<chess::Move> engineAnswer_;
+    std::optional<chess::Move> hintMove_;
+    std::int64_t hintUntilMs_ = -1;
+    int hintSerial_ = 0;
+    int engineMoves_ = 0;
+    // The animation clock the click that is being committed carried.
+    std::int64_t commitMs_ = 0;
+    // Whether the commit the human provider just answered reached the board.
+    bool commitOk_ = false;
 
     audio::Mixer mixer_;
     std::map<std::string, audio::Clip> clips_;

@@ -3,8 +3,10 @@
 // compositor did. Run it with the CD directory and a directory it may write
 // pictures into.
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +105,39 @@ void playThrough(swchess::game::GameSession& session, const char* text, std::int
             return;
         }
     }
+}
+
+// Steps the shell clock until `ready` answers true or ten real seconds pass.
+// The random engine waits out 300 ms of wall time before it answers, so a
+// count of simulated ticks is the wrong thing to wait on.
+bool pumpUntil(swchess::game::GameShell& shell, std::int64_t& clock,
+               const std::function<bool()>& ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return false;
+        }
+        clock += 10;
+        shell.advance(clock);
+    }
+    return true;
+}
+
+// Replays `moves` from the opening position and says whether every one of
+// them was legal where it was played.
+bool everyMoveLegal(const std::vector<std::string>& moves, std::string* endFen) {
+    swchess::chess::Game replay;
+    for (const std::string& text : moves) {
+        const std::optional<swchess::chess::Move> move =
+            replay.position().parseLongAlgebraic(text);
+        if (!move.has_value() || !replay.play(*move)) {
+            return false;
+        }
+    }
+    if (endFen != nullptr) {
+        *endFen = replay.position().fen();
+    }
+    return true;
 }
 
 std::string readWholeFile(const std::string& path) {
@@ -516,6 +551,14 @@ int main(int argc, char** argv) {
         check(shell.state() == swchess::game::ShellState::Playing,
               "--skip-title opens the game screen");
 
+        // The bar opens on HUMAN VS. COMPUTER, so the engine would answer
+        // every move the checks below play. These checks are about the saved
+        // games and the settings file, so both colours go to a person.
+        shell.runCommand(swchess::ui::command::kHumanHuman, 0);
+        check(shell.session().seat(swchess::chess::Color::Black) ==
+                  swchess::game::Seat::Human,
+              "HUMAN VS. HUMAN puts a person on both colours");
+
         const std::string startFen = shell.session().position().fen();
         std::int64_t shellClock = 0;
         playThrough(shell.session(), "e2e4", shellClock);
@@ -588,6 +631,165 @@ int main(int argc, char** argv) {
         check(ini.find("language=") < ini.find("turn="), "language comes before turn");
         check(swchess::ui::loadSettings(iniPath) == shell.settings(),
               "the file reads back as the settings the shell holds");
+
+        // Two engines playing each other through the script runner. Every
+        // move has to be legal where it was played, and every animation has
+        // to have finished by the time the run stops.
+        {
+            swchess::game::ScriptOptions demo;
+            demo.cdDir = cdDir;
+            demo.whiteSeat = swchess::game::Seat::Computer;
+            demo.blackSeat = swchess::game::Seat::Computer;
+            demo.enginePlies = 6;
+            demo.engineSeed = 7;
+            const swchess::game::ScriptResult run = swchess::game::runScript(demo);
+            check(!run.engineStalled, "the engine answered every request it was given");
+            check(run.engineMoves.size() == 6,
+                  "the engines played six plies, not " + std::to_string(run.engineMoves.size()));
+            check(run.played.empty(), "no script move was clicked, because both seats are engines");
+            std::string replayFen;
+            check(everyMoveLegal(run.engineMoves, &replayFen),
+                  "every move the engines played was legal");
+            check(replayFen == run.finalFen,
+                  "replaying those moves reaches the board the run left, " + run.finalFen);
+            const swchess::game::AnimState ended = run.states.back().state;
+            check(ended == swchess::game::AnimState::Idle ||
+                      ended == swchess::game::AnimState::GameOver,
+                  std::string("the run ends with nothing animating, not on ") +
+                      swchess::game::animStateName(ended));
+            std::size_t walks = 0;
+            for (const swchess::game::StateSample& sample : run.states) {
+                if (sample.state == swchess::game::AnimState::Walking) {
+                    ++walks;
+                }
+            }
+            check(walks == 6, "each of the six moves walked its piece across the board, not " +
+                                  std::to_string(walks));
+            std::printf("the engines played %s\n", run.finalFen.c_str());
+        }
+
+        // The HINT, FORCE MOVE and DEMO MODE buttons against the stand-in
+        // engine. Each one gets its own shell, so nothing above sees them.
+        {
+            swchess::game::ShellOptions engineOptions = shellOptions;
+            engineOptions.configDir = shellDir + "/engine";
+            swchess::game::GameShell engineShell(engineOptions);
+            check(engineShell.session().seat(swchess::chess::Color::White) ==
+                      swchess::game::Seat::Human,
+                  "HUMAN VS. COMPUTER seats the person on White");
+            check(engineShell.session().seat(swchess::chess::Color::Black) ==
+                      swchess::game::Seat::Computer,
+                  "and the engine on Black");
+
+            std::int64_t clock = 0;
+            const std::string openingFen = engineShell.session().position().fen();
+            engineShell.runCommand(swchess::ui::command::kHint, clock);
+            check(pumpUntil(engineShell, clock,
+                            [&] { return engineShell.session().hintSerial() > 0; }),
+                  "the HINT button got an answer from the engine");
+            const std::optional<swchess::chess::Move> hint = engineShell.session().hintMove();
+            check(hint.has_value(), "the hint names a move");
+            check(engineShell.session().position().fen() == openingFen,
+                  "HINT left the position alone");
+            check(engineShell.session().game().moves().empty(), "HINT played no move");
+            if (hint.has_value()) {
+                const std::string named =
+                    engineShell.session().position().longAlgebraic(*hint);
+                const std::string bar = engineShell.bar().statusText();
+                check(bar.find(named) != std::string::npos,
+                      "the status bar names the hint move " + named + ", not " + bar);
+            }
+            engineShell.advance(clock + 2100);
+            check(!engineShell.session().hintMove().has_value(),
+                  "the hint stops outlining its squares after two seconds");
+
+            // The person moves and the engine answers on its own.
+            clock += 2100;
+            playThrough(engineShell.session(), "e2e4", clock);
+            check(pumpUntil(engineShell, clock,
+                            [&] {
+                                return engineShell.session().game().moves().size() == 2 &&
+                                       engineShell.session().state() ==
+                                           swchess::game::AnimState::Idle;
+                            }),
+                  "the engine answered the player's move on its own");
+            check(engineShell.session().engineMoveCount() == 1,
+                  "the session counted one engine move");
+
+            // NEW GAME drops the open request, and the person still has White,
+            // so nothing moves on its own afterwards.
+            engineShell.runCommand(swchess::ui::command::kNewGame, clock);
+            check(engineShell.session().position().fen() == openingFen,
+                  "NEW GAME puts the opening position back");
+            check(!engineShell.session().engineThinking(),
+                  "NEW GAME dropped the engine request");
+            for (int tick = 0; tick < 200; ++tick) {
+                clock += 10;
+                engineShell.advance(clock);
+            }
+            check(engineShell.session().game().moves().empty(),
+                  "no engine move landed on the fresh game");
+
+            // FORCE MOVE on the player's own turn hands White to the engine.
+            const std::size_t movesBefore = engineShell.session().game().moves().size();
+            engineShell.runCommand(swchess::ui::command::kForceMove, clock);
+            check(engineShell.session().seat(swchess::chess::Color::White) ==
+                      swchess::game::Seat::Computer,
+                  "FORCE MOVE seats the engine on the colour the player was about to move");
+            check(engineShell.session().seat(swchess::chess::Color::Black) ==
+                      swchess::game::Seat::Human,
+                  "and hands the other colour to the player");
+            check(pumpUntil(engineShell, clock,
+                            [&] {
+                                return engineShell.session().game().moves().size() >
+                                           movesBefore &&
+                                       engineShell.session().state() ==
+                                           swchess::game::AnimState::Idle;
+                            }),
+                  "FORCE MOVE made the engine play");
+            check(engineShell.session().game().moves().size() == movesBefore + 1,
+                  "FORCE MOVE played exactly one move");
+            std::vector<std::string> forced;
+            for (const swchess::chess::Move& move : engineShell.session().game().moves()) {
+                forced.push_back(swchess::chess::squareName(move.from) +
+                                 swchess::chess::squareName(move.to));
+            }
+            std::string forcedFen;
+            check(everyMoveLegal(forced, &forcedFen), "the forced move was legal");
+            check(forcedFen == engineShell.session().position().fen(),
+                  "the board after FORCE MOVE is the board those moves reach");
+
+            // DEMO MODE puts the engine on both colours and the next button
+            // press puts the player's own pairing back.
+            engineShell.runCommand(swchess::ui::command::kNewGame, clock);
+            engineShell.runCommand(swchess::ui::command::kDemoMode, clock);
+            check(engineShell.inDemoMode(), "DEMO MODE is running");
+            check(engineShell.session().seat(swchess::chess::Color::White) ==
+                      swchess::game::Seat::Computer,
+                  "DEMO MODE seats the engine on White, so it opens the game");
+            check(pumpUntil(engineShell, clock,
+                            [&] {
+                                return engineShell.session().game().moves().size() == 2 &&
+                                       engineShell.session().state() ==
+                                           swchess::game::AnimState::Idle;
+                            }),
+                  "the two engines played the first two moves of the demo");
+            engineShell.runCommand(swchess::ui::command::kShowCaptured, clock);
+            check(!engineShell.inDemoMode(), "a button press ends the demo");
+            check(engineShell.session().seat(swchess::chess::Color::Black) ==
+                      swchess::game::Seat::Computer,
+                  "the pairing DEMO MODE interrupted comes back");
+
+            // The five play level buttons reach the engine.
+            engineShell.runCommand(swchess::ui::command::kLevelNewcomer, clock);
+            check(engineShell.engine() != nullptr &&
+                      engineShell.engine()->level() == swchess::engine::Level::Newcomer,
+                  "the NEWCOMER button set the engine level");
+            engineShell.runCommand(swchess::ui::command::kLevelExpert, clock);
+            check(engineShell.engine() != nullptr &&
+                      engineShell.engine()->level() == swchess::engine::Level::Expert,
+                  "the EXPERT button set the engine level");
+        }
 
         // The title sequence runs the four launch screens and then hands over
         // to the game screen.

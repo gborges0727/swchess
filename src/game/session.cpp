@@ -265,6 +265,10 @@ void GameSession::collectInterp() {
     }
 }
 
+const char* seatName(Seat seat) {
+    return seat == Seat::Human ? "human" : "computer";
+}
+
 void GameSession::newGame() {
     mixer_.stopAll();
     capturePlayer_.start(nullptr, 0);
@@ -282,6 +286,8 @@ void GameSession::newGame() {
     promotionTo_.reset();
     resetDisplay();
     state_ = AnimState::Idle;
+    cancelRequests();
+    engineMoves_ = 0;
 }
 
 void GameSession::setGame(const chess::Game& game) {
@@ -299,9 +305,170 @@ bool GameSession::undo() {
         return false;
     }
     game_.undo();
+    cancelRequests();
     clearSelection();
     resetDisplay();
     state_ = game_.result() == chess::GameResult::Ongoing ? AnimState::Idle : AnimState::GameOver;
+    return true;
+}
+
+// How long a hint keeps its two squares outlined.
+constexpr std::int64_t kHintHoldMs = 2000;
+
+void GameSession::setEngine(engine::Engine* engine) {
+    if (engine_ == engine) {
+        return;
+    }
+    cancelRequests();
+    engine_ = engine;
+}
+
+void GameSession::setSeat(chess::Color color, Seat seat) {
+    Seat& slot = seats_[static_cast<int>(color)];
+    if (slot == seat) {
+        return;
+    }
+    slot = seat;
+    // The open request belongs to the provider that just lost the seat, so it
+    // goes away and the new provider is asked instead.
+    cancelRequests();
+    if (state_ == AnimState::Idle) {
+        startRequest();
+    }
+}
+
+bool GameSession::engineToMove() const {
+    return seats_[static_cast<int>(game_.position().sideToMove())] == Seat::Computer;
+}
+
+chess::MoveProvider* GameSession::providerFor(chess::Color color) {
+    if (seats_[static_cast<int>(color)] == Seat::Human) {
+        return &human_;
+    }
+    return engine_;
+}
+
+void GameSession::cancelRequests() {
+    if (requestOpen_) {
+        human_.cancel(request_);
+        if (engine_ != nullptr) {
+            engine_->cancel(request_);
+        }
+        requestOpen_ = false;
+    }
+    if (hintOpen_ && engine_ != nullptr) {
+        engine_->cancel(hintRequest_);
+    }
+    hintOpen_ = false;
+    thinking_ = false;
+    engineAnswer_.reset();
+    hintMove_.reset();
+    hintUntilMs_ = -1;
+    // Ids only ever count up, so an answer that arrives late carries an id
+    // these two no longer hold and the callback drops it.
+    request_ = 0;
+    hintRequest_ = 0;
+}
+
+void GameSession::startRequest() {
+    if (requestOpen_ || state_ != AnimState::Idle) {
+        return;
+    }
+    if (game_.result() != chess::GameResult::Ongoing) {
+        return;
+    }
+    const chess::Color side = game_.position().sideToMove();
+    chess::MoveProvider* provider = providerFor(side);
+    if (provider == nullptr) {
+        // A computer seat with no engine behind it. The board just waits.
+        return;
+    }
+    request_ = nextRequestId_++;
+    requestOpen_ = true;
+    thinking_ = seats_[static_cast<int>(side)] == Seat::Computer;
+    provider->requestMove(game_.position(), request_,
+                          [this](chess::RequestId answered, chess::Move move) {
+                              if (!requestOpen_ || answered != request_) {
+                                  return;
+                              }
+                              requestOpen_ = false;
+                              if (thinking_) {
+                                  // This runs inside the engine's poll(). The
+                                  // move waits for the next advance so no
+                                  // animation starts from in there.
+                                  engineAnswer_ = move;
+                                  return;
+                              }
+                              commitOk_ = beginMove(move, commitMs_);
+                          });
+}
+
+bool GameSession::submitHumanMove(chess::Move move, std::int64_t nowMs) {
+    commitMs_ = nowMs;
+    commitOk_ = false;
+    if (!requestOpen_) {
+        startRequest();
+    }
+    if (human_.hasPending() && human_.submit(move) && commitOk_) {
+        return true;
+    }
+    return beginMove(move, nowMs);
+}
+
+void GameSession::updateEngine(std::int64_t nowMs) {
+    if (hintUntilMs_ >= 0 && nowMs >= hintUntilMs_) {
+        hintUntilMs_ = -1;
+        hintMove_.reset();
+    }
+    if (engine_ != nullptr) {
+        engine_->poll();
+    }
+    if (engineAnswer_.has_value()) {
+        const chess::Move move = *engineAnswer_;
+        engineAnswer_.reset();
+        thinking_ = false;
+        if (state_ == AnimState::Idle && beginMove(move, nowMs)) {
+            ++engineMoves_;
+        }
+        return;
+    }
+    if (!requestOpen_ && state_ == AnimState::Idle) {
+        startRequest();
+    }
+}
+
+bool GameSession::forceEngineMove() {
+    if (engine_ == nullptr || !thinking_) {
+        return false;
+    }
+    engine_->forceMove();
+    return true;
+}
+
+bool GameSession::requestHint() {
+    if (engine_ == nullptr || state_ != AnimState::Idle) {
+        return false;
+    }
+    if (game_.result() != chess::GameResult::Ongoing) {
+        return false;
+    }
+    if (engineToMove() || thinking_ || hintOpen_) {
+        return false;
+    }
+    hintRequest_ = nextRequestId_++;
+    hintOpen_ = true;
+    hintMove_.reset();
+    hintUntilMs_ = -1;
+    engine_->requestHint(game_.position(), hintRequest_,
+                         [this](chess::RequestId answered, chess::Move move) {
+                             if (!hintOpen_ || answered != hintRequest_) {
+                                 return;
+                             }
+                             hintOpen_ = false;
+                             hintMove_ = move;
+                             hintUntilMs_ = nowMs_ + kHintHoldMs;
+                             ++hintSerial_;
+                         });
     return true;
 }
 
@@ -368,6 +535,10 @@ bool GameSession::clickSquare(chess::Square square, std::int64_t nowMs) {
     if (state_ != AnimState::Idle) {
         return false;
     }
+    // The board takes no clicks while the computer holds the move.
+    if (engineToMove()) {
+        return false;
+    }
     const chess::Position& position = game_.position();
 
     // A click on a destination plays the move. Anything else that is not one
@@ -386,7 +557,7 @@ bool GameSession::clickSquare(chess::Square square, std::int64_t nowMs) {
                 state_ = AnimState::Promoting;
                 return true;
             }
-            return beginMove(matches.front(), nowMs);
+            return submitHumanMove(matches.front(), nowMs);
         }
     }
 
@@ -418,7 +589,7 @@ bool GameSession::choosePromotion(chess::PieceType type, std::int64_t nowMs) {
             promotionFrom_.reset();
             promotionTo_.reset();
             state_ = AnimState::Idle;
-            return beginMove(move, nowMs);
+            return submitHumanMove(move, nowMs);
         }
     }
     return false;
@@ -592,6 +763,11 @@ bool GameSession::skipCapture(std::int64_t nowMs) {
 }
 
 void GameSession::advance(std::int64_t nowMs) {
+    advanceAnimation(nowMs);
+    updateEngine(nowMs_);
+}
+
+void GameSession::advanceAnimation(std::int64_t nowMs) {
     if (nowMs > nowMs_) {
         nowMs_ = nowMs;
     }
@@ -666,6 +842,12 @@ void GameSession::drawSquareOutline(Image& out, chess::Square square, std::uint8
 }
 
 void GameSession::drawHighlights(Image& out) const {
+    if (hintMove_.has_value()) {
+        // The hint outlines both of its squares in the same blue, so neither
+        // one reads as a selection the player made.
+        drawSquareOutline(out, hintMove_->from, 90, 160, 255, 200);
+        drawSquareOutline(out, hintMove_->to, 90, 160, 255, 200);
+    }
     if (!selected_.has_value()) {
         return;
     }

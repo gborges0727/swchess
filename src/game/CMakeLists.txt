@@ -21,6 +21,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   if(NOT SWCHESS_CD_DIR)
     set(SWCHESS_CD_DIR "${SWCHESS_GAME_REPO_ROOT}/original/win3x/cd")
   endif()
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../engine" engine)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../anim" anim)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../board" board)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../audio" audio)
@@ -37,7 +38,7 @@ add_library(swchess_game STATIC
 # Headers include as "game/session.h", so the include root is src.
 target_include_directories(swchess_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_game PUBLIC swchess_anim swchess_board swchess_audio swchess_text
-                      swchess_ui swchess_save)
+                      swchess_ui swchess_save swchess_engine)
 target_compile_options(swchess_game PRIVATE -Wall -Wextra)
 
 add_executable(game_test game_test.cpp)

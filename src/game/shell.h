@@ -19,6 +19,7 @@
 #include <string>
 
 #include "audio/wav_load.h"
+#include "engine/engine.h"
 #include "game/session.h"
 #include "ui/buttons.h"
 #include "ui/settings.h"
@@ -81,7 +82,16 @@ struct ShellOptions {
     // LOAD GAME. An empty answer cancels, and no callback at all leaves both
     // buttons reporting that they have no chooser.
     std::function<std::string(bool save)> chooseFile;
+    // Builds the computer opponent. No callback makes the random stand-in,
+    // so pointing this at makeOriginalEngine is the whole change the ported
+    // engine needs on this side.
+    std::function<std::unique_ptr<engine::Engine>(const engine::Config&)> makeEngine;
 };
+
+// The engine level the play_level command id 460 to 464 stands for.
+engine::Level levelOfCommand(int command);
+// That command id back again.
+int commandOfLevel(engine::Level level);
 
 class GameShell {
 public:
@@ -123,6 +133,12 @@ public:
     // Draws the whole 674 by 512 window.
     void render(Image& out);
 
+    engine::Engine* engine() { return engine_.get(); }
+
+    // True while DEMO MODE has both seats on the engine. The next click on
+    // the board or on any button puts the player's own pairing back.
+    bool inDemoMode() const { return demoPlayers_ != ui::kNoCommand; }
+
     GameSession& session() { return session_; }
     const GameSession& session() const { return session_; }
     ui::ButtonBar& bar() { return *bar_; }
@@ -162,6 +178,12 @@ private:
     // Hands the move to `color`, which is what SWITCH SIDES and the two setup
     // buttons do. Returns false when the rules module refuses the position.
     bool setSideToMove(chess::Color color);
+    // Seats the two colours the way the pressed SELECT PLAYERS button says.
+    void applyPlayers(int command);
+    // Ends DEMO MODE and puts the pairing the player had back.
+    void leaveDemoMode();
+    // Puts a fresh hint into the status bar once the engine answers.
+    void noteHint();
     std::string chooseFile(bool save);
 
     ShellOptions options_;
@@ -169,7 +191,12 @@ private:
     ui::Settings ini_{};
 
     GameSession session_;
+    std::unique_ptr<engine::Engine> engine_;
     std::unique_ptr<ui::ButtonBar> bar_;
+    // The pairing DEMO MODE interrupted, or kNoCommand when demo is off.
+    int demoPlayers_ = ui::kNoCommand;
+    // The hint count the bar has already shown.
+    int hintShown_ = 0;
     std::unique_ptr<ui::TitleSequence> title_;
 
     ShellState state_ = ShellState::Title;
