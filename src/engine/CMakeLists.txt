@@ -39,6 +39,11 @@ endif()
 
 add_library(swchess_engine STATIC
   random_engine.cpp
+  original/book.cpp
+  original/cmp.cpp
+  original/eval.cpp
+  original/search.cpp
+  original/original_engine.cpp
 )
 # Headers include as "engine/engine.h", so the include root is src.
 target_include_directories(swchess_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")

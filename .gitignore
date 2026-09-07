@@ -1,5 +1,7 @@
-# Original game files. Copyrighted Lucasfilm / Software Toolworks material, never committed.
-original/
+# The original game files at the repo root. Copyrighted Lucasfilm and Software
+# Toolworks material, never committed. The leading slash keeps the rule off
+# src/engine/original/, which holds the port of the engine and is ours.
+/original/
 /build*/
 /assets/
 .cache/
