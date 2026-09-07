@@ -30,6 +30,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../save" save)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../platform" platform)
 endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
 
 add_library(swchess_game STATIC
   session.cpp
@@ -40,11 +41,16 @@ add_library(swchess_game STATIC
 target_include_directories(swchess_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_game PUBLIC swchess_anim swchess_board swchess_audio swchess_text
                       swchess_ui swchess_save swchess_engine swchess_platform)
-target_compile_options(swchess_game PRIVATE -Wall -Wextra)
+target_compile_options(swchess_game PRIVATE ${SWCHESS_WARNINGS})
+
+# The test reads the original CD, which a checkout does not carry.
+if(NOT (BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}"))
+  return()
+endif()
 
 add_executable(game_test game_test.cpp)
 target_link_libraries(game_test PRIVATE swchess_game)
-target_compile_options(game_test PRIVATE -Wall -Wextra)
+target_compile_options(game_test PRIVATE ${SWCHESS_WARNINGS})
 
 # Where tools/interp writes its 60 frames per second capture frames. The test
 # skips its enhanced cadence checks when BBWB has no manifest there yet.
