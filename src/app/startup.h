@@ -4,12 +4,21 @@
 // A shell script did this on macOS. The game binary does it now, so the same
 // code serves macOS, Windows and Linux.
 //
-// Four sources answer the question, and the first one that answers wins:
+// Five sources answer the question, and the first one that answers wins:
 //
-//   1. the command line, --cd and --assets
-//   2. the environment, SWCHESS_CD and SWCHESS_ASSETS
-//   3. the configuration file in swchess::platform::configDir()
-//   4. a folder dialog the player picks the CD folder in
+//   1. the data inside the application bundle, next to the program
+//   2. the command line, --cd and --assets
+//   3. the environment, SWCHESS_CD and SWCHESS_ASSETS
+//   4. the configuration file in swchess::platform::configDir()
+//   5. a folder dialog the player picks the CD folder in
+//
+// The first source is different from the other four. The owner's private
+// build keeps the CD files and the artwork inside the bundle, and that
+// build reads nothing else. It ignores --cd, --assets, SWCHESS_CD,
+// SWCHESS_ASSETS and the configuration file, and it opens no dialog. When a
+// file it needs is missing it stops and names that file, rather than looking
+// somewhere else. The public build carries no data, so sources two to five
+// answer there.
 //
 // Only resolveStartup() opens a dialog. A headless run calls
 // resolveWithoutAsking(), which fails with a message instead.
@@ -35,6 +44,11 @@ struct StartupRequest {
     // Set this to skip the environment, which the test does so a stray
     // SWCHESS_CD on the machine cannot change the answer.
     bool readEnvironment = true;
+    // The folder to look in for data shipped beside the program. Leave it
+    // empty and the code asks SDL_GetBasePath(), which is
+    // Contents/Resources on macOS and the folder holding the program
+    // everywhere else. The test sets it to a folder it built itself.
+    std::string basePath;
 };
 
 enum class StartupStatus {
@@ -86,6 +100,26 @@ const std::vector<std::string>& requiredCdFiles();
 // folder is a usable CD folder. A folder that is not there at all comes back
 // with every name in it.
 std::vector<std::string> missingCdFiles(const std::string& dir);
+
+// What a build keeps inside itself.
+struct BundleData {
+    // True when this build has its own data, which is the case when
+    // `<base>/cd` is a directory or `<base>/assets/catalog.json` is a file.
+    // The public build ships neither, so this stays false there.
+    bool present = false;
+    // The two folders, `<base>/cd` and `<base>/assets`. They are filled in
+    // whenever `present` is true, even when a file inside them is missing.
+    std::string cdDir;
+    std::string assetsDir;
+    // The names of the files the build should carry and does not. An empty
+    // list means the bundled data is complete.
+    std::vector<std::string> missing;
+};
+
+// Looks for CD files and artwork inside `basePath`. Pass SDL_GetBasePath()
+// in a real run. The test passes a folder it made, so it can check a
+// complete bundle and a broken one without building an application.
+BundleData findBundleData(const std::string& basePath);
 
 // Reads the command line, the environment and the configuration file, and
 // stops there. It opens no dialog, so a headless run and the test can both

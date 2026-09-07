@@ -58,6 +58,10 @@ int main() {
     const std::filesystem::path lowerCd = root / "cd-lower";
     const std::filesystem::path shortCd = root / "cd-short";
     const std::filesystem::path configHome = root / "config";
+    // A folder with no cd and no assets in it. A request pointed here stands
+    // for the public build, which carries no data of its own.
+    const std::filesystem::path emptyBase = root / "empty-base";
+    std::filesystem::create_directories(emptyBase);
     makeCd(upperCd, false);
     makeCd(lowerCd, true);
     std::filesystem::create_directories(shortCd);
@@ -77,6 +81,7 @@ int main() {
     // Nothing names a CD folder, so the game cannot start without a dialog.
     {
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.configDir = configHome.string();
         request.readEnvironment = false;
         const StartupResult result = swchess::app::resolveWithoutAsking(request);
@@ -88,6 +93,7 @@ int main() {
     // The command line wins over everything else.
     {
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.cdDir = upperCd.string() + "/";
         request.assetsDir = (root / "art").string();
         request.configDir = configHome.string();
@@ -103,6 +109,7 @@ int main() {
         setenv("SWCHESS_CD", lowerCd.string().c_str(), 1);
         setenv("SWCHESS_ASSETS", (root / "env-art").string().c_str(), 1);
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.configDir = configHome.string();
         const StartupResult result = swchess::app::resolveWithoutAsking(request);
         check(result.status == StartupStatus::Ready, "SWCHESS_CD names a usable folder");
@@ -129,6 +136,7 @@ int main() {
               "the configuration file is written");
 
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.configDir = configHome.string();
         request.readEnvironment = false;
         const StartupResult result = swchess::app::resolveWithoutAsking(request);
@@ -145,6 +153,7 @@ int main() {
         written.assetsDir = (root / "saved-art").string();
         swchess::app::writeStartupConfig(configHome.string(), written);
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.configDir = configHome.string();
         request.readEnvironment = false;
         const StartupResult result = swchess::app::resolveWithoutAsking(request);
@@ -162,6 +171,7 @@ int main() {
         file.close();
 
         StartupRequest request;
+        request.basePath = emptyBase.string();
         request.configDir = legacyHome.string();
         request.readEnvironment = false;
         const StartupResult result = swchess::app::resolveWithoutAsking(request);
@@ -178,6 +188,72 @@ int main() {
         const StartupResult again = swchess::app::resolveWithoutAsking(request);
         check(again.cdDir == lowerCd.string(), "the versioned file wins over the old one");
         check(std::filesystem::exists(legacyHome / "config"), "the old file stays where it was");
+    }
+
+    // A build with the data inside it reads that data and nothing else.
+    {
+        const std::filesystem::path base = root / "bundle-base";
+        makeCd(base / "cd", false);
+        std::filesystem::create_directories(base / "assets");
+        touch(base / "assets" / "catalog.json");
+
+        const swchess::app::BundleData found = swchess::app::findBundleData(base.string());
+        check(found.present, "the bundle holds its own data");
+        check(found.missing.empty(), "the bundled data is complete");
+        check(!swchess::app::findBundleData(emptyBase.string()).present,
+              "a folder with no cd and no assets holds no bundled data");
+
+        // The command line, the environment and the saved file all name the
+        // lowercase copy. The bundled copy wins over all three.
+        setenv("SWCHESS_CD", lowerCd.string().c_str(), 1);
+        setenv("SWCHESS_ASSETS", (root / "env-art").string().c_str(), 1);
+        swchess::app::StartupConfig written;
+        written.cdDir = lowerCd.string();
+        written.assetsDir = (root / "saved-art").string();
+        swchess::app::writeStartupConfig(configHome.string(), written);
+
+        StartupRequest request;
+        request.basePath = base.string();
+        request.cdDir = lowerCd.string();
+        request.assetsDir = (root / "art").string();
+        request.configDir = configHome.string();
+        const StartupResult result = swchess::app::resolveWithoutAsking(request);
+        check(result.status == StartupStatus::Ready, "the bundled data starts the game");
+        check(result.cdDir == (base / "cd").string(), "the bundled CD folder wins over --cd");
+        check(result.assetsDir == (base / "assets").string(),
+              "the bundled artwork folder wins over --assets");
+        check(!result.shouldSave, "a bundled build writes no startup.conf");
+
+        unsetenv("SWCHESS_CD");
+        unsetenv("SWCHESS_ASSETS");
+    }
+
+    // A bundled build with a file missing stops and names it. It falls back
+    // to no other folder, even when the command line names a good one.
+    {
+        const std::filesystem::path base = root / "broken-base";
+        makeCd(base / "cd", false);
+        std::filesystem::remove(base / "cd" / "CC256.DLL");
+        std::filesystem::create_directories(base / "assets");
+
+        const swchess::app::BundleData found = swchess::app::findBundleData(base.string());
+        check(found.present, "a build with a cd folder has its own data");
+        check(found.missing.size() == 2 && found.missing[0] == "CC256.DLL" &&
+                  found.missing[1] == "assets/catalog.json",
+              "the missing list names the file and the catalog");
+
+        StartupRequest request;
+        request.basePath = base.string();
+        request.cdDir = upperCd.string();
+        request.configDir = configHome.string();
+        request.readEnvironment = false;
+        const StartupResult result = swchess::app::resolveWithoutAsking(request);
+        check(result.status == StartupStatus::Failed, "a broken bundled build fails");
+        check(result.message.find("CC256.DLL") != std::string::npos,
+              "the message names the missing CD file");
+        check(result.message.find("catalog.json") != std::string::npos,
+              "the message names the missing catalog");
+        check(result.cdDir != upperCd.string(), "the broken build does not use --cd instead");
     }
 
     std::filesystem::remove_all(root);

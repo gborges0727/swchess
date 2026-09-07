@@ -2,6 +2,13 @@
 # Checks a downloaded Star Wars Chess the way a player receives it.
 #
 #   ./scripts/check-installed-app.sh <app or dmg> --cd <CD folder>
+#   ./scripts/check-installed-app.sh <app or dmg> --full
+#
+# --full checks the private build that keeps the CD files and the artwork
+# inside it. That build needs no --cd, so the script starts it with no
+# arguments and with HOME pointed at an empty folder, which proves the app
+# reads its own data and no saved setting. It also skips the allowed file
+# list, because the bundled data is exactly what that list keeps out.
 #
 # It mounts the disk image when you give it one, copies the app to a
 # temporary folder, and works only from that copy. The copy stands in for
@@ -13,6 +20,7 @@
 #   3. No binary loads a library from Homebrew, /usr/local or a build
 #      directory.
 #   4. Every file in the bundle appears in packaging/bundle-allowlist.txt.
+#      A --full run skips this one.
 #   5. The game starts from the copy and draws a picture, with SWCHESS_REPO
 #      unset and the working directory set to /, so it cannot reach the
 #      source tree.
@@ -21,11 +29,16 @@ set -eu
 target=${1:?usage: check-installed-app.sh <app or dmg> --cd <CD folder>}
 shift
 cd_dir=""
+full=0
 while [ $# -gt 0 ]; do
     case $1 in
         --cd)
             cd_dir=${2:?--cd needs a folder}
             shift 2
+            ;;
+        --full)
+            full=1
+            shift
             ;;
         *)
             echo "unknown argument $1" >&2
@@ -34,11 +47,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -z "$cd_dir" ] || [ ! -d "$cd_dir" ]; then
-    echo "give --cd the folder holding your copy of the CD" >&2
-    exit 1
+if [ "$full" = "0" ]; then
+    if [ -z "$cd_dir" ] || [ ! -d "$cd_dir" ]; then
+        echo "give --cd the folder holding your copy of the CD" >&2
+        exit 1
+    fi
+    cd_dir=$(cd "$cd_dir" && pwd)
 fi
-cd_dir=$(cd "$cd_dir" && pwd)
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 allowlist="$root/packaging/bundle-allowlist.txt"
@@ -98,7 +113,11 @@ fi
 
 echo "== checking what the binaries load"
 problems=$(mktemp "$work/problems.XXXXXX")
-find "$app" -type f -print | sort | while read -r path; do
+# The bundled CD files and artwork are data, so the search skips them. The
+# public bundle holds neither folder, so this reads the same files as before.
+find "$app" -type f \
+    ! -path "$app/Contents/Resources/cd/*" \
+    ! -path "$app/Contents/Resources/assets/*" -print | sort | while read -r path; do
     file -b "$path" | grep -q 'Mach-O' || continue
     # Only the indented lines name a library. The others name the file
     # itself and its architectures.
@@ -115,26 +134,49 @@ if [ -s "$problems" ]; then
     exit 1
 fi
 
-echo "== checking the bundle against the allowed file list"
-allowed=$(mktemp "$work/allowed.XXXXXX")
-grep -v '^#' "$allowlist" | grep -v '^$' | sort >"$allowed"
-present=$(mktemp "$work/present.XXXXXX")
-(cd "$app" && find . \( -type f -o -type l \) -print | sed 's|^\./||' | sort) >"$present"
-extra=$(comm -23 "$present" "$allowed" || true)
-if [ -n "$extra" ]; then
-    echo "the bundle holds files that packaging/bundle-allowlist.txt does not name:" >&2
-    printf '%s\n' "$extra" >&2
-    exit 1
+if [ "$full" = "1" ]; then
+    echo "== skipping the allowed file list, because this build has CD data in it"
+    if [ ! -d "$app/Contents/Resources/cd" ] || \
+        [ ! -f "$app/Contents/Resources/assets/catalog.json" ]; then
+        echo "the app is missing Contents/Resources/cd or the artwork catalog" >&2
+        exit 1
+    fi
+else
+    echo "== checking the bundle against the allowed file list"
+    allowed=$(mktemp "$work/allowed.XXXXXX")
+    grep -v '^#' "$allowlist" | grep -v '^$' | sort >"$allowed"
+    present=$(mktemp "$work/present.XXXXXX")
+    (cd "$app" && find . \( -type f -o -type l \) -print | sed 's|^\./||' | sort) >"$present"
+    extra=$(comm -23 "$present" "$allowed" || true)
+    if [ -n "$extra" ]; then
+        echo "the bundle holds files that packaging/bundle-allowlist.txt does not name:" >&2
+        printf '%s\n' "$extra" >&2
+        exit 1
+    fi
 fi
 
 echo "== playing the game from the copy"
 picture="$work/out.ppm"
-(
-    cd /
-    env -u SWCHESS_REPO -u SWCHESS_CD -u SWCHESS_ASSETS \
-        "$app/Contents/MacOS/Star Wars Chess" \
-        --cd "$cd_dir" --skip-title --dump-at 500 "$picture"
-)
+if [ "$full" = "1" ]; then
+    # No --cd, no --assets, and a home directory with no startup.conf in it.
+    # The only place left for the app to read its data is inside itself.
+    empty_home="$work/empty-home"
+    mkdir -p "$empty_home"
+    (
+        cd /
+        env -u SWCHESS_REPO -u SWCHESS_CD -u SWCHESS_ASSETS \
+            -u XDG_CONFIG_HOME "HOME=$empty_home" \
+            "$app/Contents/MacOS/Star Wars Chess" \
+            --skip-title --dump-at 500 "$picture"
+    )
+else
+    (
+        cd /
+        env -u SWCHESS_REPO -u SWCHESS_CD -u SWCHESS_ASSETS \
+            "$app/Contents/MacOS/Star Wars Chess" \
+            --cd "$cd_dir" --skip-title --dump-at 500 "$picture"
+    )
+fi
 if [ ! -s "$picture" ]; then
     echo "the game wrote no picture at $picture" >&2
     exit 1

@@ -80,9 +80,9 @@ them in this order. The build directory `build-release` is separate from
 ```sh
 ./scripts/build-app.sh build-release 'arm64;x86_64' 11.0
 SWCHESS_SIGN_IDENTITY='Developer ID Application: NAME (E85W63H34G)' \
-    ./scripts/package-macos.sh 'build-release/Star Wars Chess.app' dist 0.6.0
-SWCHESS_NOTARY_PROFILE=swchess-notary ./scripts/notarize-macos.sh dist/StarWarsChess-0.6.0.dmg
-./scripts/check-installed-app.sh dist/StarWarsChess-0.6.0.dmg --cd original/win3x/cd
+    ./scripts/package-macos.sh 'build-release/Star Wars Chess.app' dist 0.6.1
+SWCHESS_NOTARY_PROFILE=swchess-notary ./scripts/notarize-macos.sh dist/StarWarsChess-0.6.1.dmg
+./scripts/check-installed-app.sh dist/StarWarsChess-0.6.1.dmg --cd original/win3x/cd
 ```
 
 `build-app.sh` takes a build directory, a list of CPU architectures and the
@@ -113,6 +113,15 @@ checks that no binary reaches outside the bundle, checks every file in the
 bundle against `packaging/bundle-allowlist.txt`, and plays 500 milliseconds
 of a game from that copy with the source tree out of reach. The allow-list is
 what keeps a file decoded from your CD out of a release.
+
+`package-macos.sh --bundle-data <CD folder> <assets folder>` copies the CD
+files into `Contents/Resources/cd` and the artwork into
+`Contents/Resources/assets`, signs the app after that copy, and writes
+`StarWarsChess-<version>-full.dmg`. That app reads its own copy of both
+folders and ignores `--cd`, `--assets`, `SWCHESS_CD`, `SWCHESS_ASSETS` and
+`startup.conf`, so the owner only double-clicks it. Check that image with
+`./scripts/check-installed-app.sh <dmg> --full`, and keep it on your own Mac,
+because it contains the files from the CD.
 
 ### The one-time setup
 

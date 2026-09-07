@@ -49,18 +49,43 @@ std::string env(const char* name) {
     return value == nullptr ? std::string() : std::string(value);
 }
 
+// Joins the names into one list a sentence can hold.
+std::string nameList(const std::vector<std::string>& names) {
+    std::string text;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            text += i + 1 == names.size() ? " and " : ", ";
+        }
+        text += names[i];
+    }
+    return text;
+}
+
 // Puts the missing names into one sentence the player can act on.
 std::string missingFilesMessage(const std::string& dir,
                                 const std::vector<std::string>& missing) {
-    std::string message = dir + " is missing ";
-    for (std::size_t i = 0; i < missing.size(); ++i) {
-        if (i > 0) {
-            message += i + 1 == missing.size() ? " and " : ", ";
-        }
-        message += missing[i];
+    return dir + " is missing " + nameList(missing) +
+           ". Pick the folder that holds the Star Wars Chess CD files.";
+}
+
+// Says which files the bundled copy should have and does not. This build
+// reads no other folder, so the only fix is to build it again with the
+// missing files in place.
+std::string bundleMissingMessage(const std::string& base,
+                                 const std::vector<std::string>& missing) {
+    return "This build carries its own data, and " + base + " is missing " + nameList(missing) +
+           ". Package the application again with the CD files in cd and the artwork in assets.";
+}
+
+// The folder to look in for data shipped beside the program. SDL answers
+// with Contents/Resources inside a macOS application bundle, and with the
+// folder holding the program on Windows and Linux.
+std::string bundleBase(const StartupRequest& request) {
+    if (!request.basePath.empty()) {
+        return request.basePath;
     }
-    message += ". Pick the folder that holds the Star Wars Chess CD files.";
-    return message;
+    const char* fromSdl = SDL_GetBasePath();
+    return fromSdl == nullptr ? std::string() : std::string(fromSdl);
 }
 
 // What the folder dialog leaves behind. SDL calls the callback on the thread
@@ -152,6 +177,33 @@ std::vector<std::string> missingCdFiles(const std::string& dir) {
     return missing;
 }
 
+BundleData findBundleData(const std::string& basePath) {
+    BundleData found;
+    if (basePath.empty()) {
+        return found;
+    }
+    const std::filesystem::path base(basePath);
+    const std::filesystem::path cd = base / "cd";
+    const std::filesystem::path assets = base / "assets";
+    const std::filesystem::path catalog = assets / "catalog.json";
+
+    std::error_code error;
+    const bool hasCdDir = std::filesystem::is_directory(cd, error);
+    const bool hasCatalog = std::filesystem::is_regular_file(catalog, error);
+    if (!hasCdDir && !hasCatalog) {
+        return found;
+    }
+
+    found.present = true;
+    found.cdDir = tidyPath(cd.string());
+    found.assetsDir = tidyPath(assets.string());
+    found.missing = missingCdFiles(found.cdDir);
+    if (!hasCatalog) {
+        found.missing.push_back("assets/catalog.json");
+    }
+    return found;
+}
+
 bool readStartupConfig(const std::string& dir, StartupConfig* out) {
     if (out == nullptr) {
         return false;
@@ -216,6 +268,32 @@ bool writeStartupConfig(const std::string& dir, const StartupConfig& config) {
 
 StartupResult resolveWithoutAsking(const StartupRequest& request) {
     StartupResult result;
+
+    // A build with the data inside it reads that data and nothing else.
+    // Look for it before reading the command line, so the owner's private
+    // build always plays the copy inside it.
+    const std::string base = bundleBase(request);
+    const BundleData bundled = findBundleData(base);
+    if (bundled.present) {
+        const bool named = !request.cdDir.empty() || !request.assetsDir.empty() ||
+                           (request.readEnvironment &&
+                            (!env("SWCHESS_CD").empty() || !env("SWCHESS_ASSETS").empty()));
+        if (named) {
+            std::fprintf(stderr,
+                         "This build carries its own CD files and artwork, so it ignores "
+                         "--cd, --assets, SWCHESS_CD and SWCHESS_ASSETS.\n");
+        }
+        result.cdDir = bundled.cdDir;
+        result.assetsDir = bundled.assetsDir;
+        if (!bundled.missing.empty()) {
+            result.status = StartupStatus::Failed;
+            result.message = bundleMissingMessage(base, bundled.missing);
+            return result;
+        }
+        result.status = StartupStatus::Ready;
+        return result;
+    }
+
     result.cdDir = tidyPath(request.cdDir);
     result.assetsDir = tidyPath(request.assetsDir);
 
@@ -277,6 +355,11 @@ StartupResult resolveStartup(const StartupRequest& request, SDL_Window* window) 
         return result;
     }
     if (window == nullptr) {
+        return result;
+    }
+    // A build with the data inside it never asks the player for a folder,
+    // because no folder the player picks would be the right answer.
+    if (findBundleData(bundleBase(request)).present) {
         return result;
     }
 
