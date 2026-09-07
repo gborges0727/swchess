@@ -165,13 +165,13 @@ inline constexpr std::int64_t kWalkFrameMs = 100;
 
 // How many points of the path one frame carries the piece forward.
 //
-// The path holds every other pixel, so six points is twelve screen pixels
+// The path holds every other pixel, so four points is eight screen pixels
 // a frame and a square takes three or four frames. The INI dx and dy describe
 // how far the artwork's own feet move, three pixels a frame for R2-D2, and
 // pacing the walk by those numbers would take a piece a second and a half to
 // cross one square. The frames cycle instead, which is what a walk cycle is
 // for, and the piece keeps this steady pace whatever character it is.
-inline constexpr int kWalkPointsPerFrame = 6;
+inline constexpr int kWalkPointsPerFrame = 4;
 
 // The bitmap the caller should draw and where to put it.
 struct WalkDraw {
