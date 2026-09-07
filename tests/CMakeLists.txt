@@ -105,7 +105,7 @@ add_test(NAME timeline.parity
 # needs no CD.
 add_executable(cdfs_test "${CMAKE_SOURCE_DIR}/src/assets/cdfs_test.cpp")
 target_include_directories(cdfs_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_compile_options(cdfs_test PRIVATE -Wall -Wextra)
+target_compile_options(cdfs_test PRIVATE ${SWCHESS_WARNINGS})
 add_test(NAME assets.cdfs COMMAND cdfs_test)
 
 # How startup picks the CD folder and the artwork folder. It builds its own
@@ -116,3 +116,13 @@ target_include_directories(startup_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(startup_test PRIVATE swchess_platform SDL3::SDL3)
 target_compile_options(startup_test PRIVATE ${SWCHESS_WARNINGS})
 add_test(NAME app.startup COMMAND startup_test)
+
+# A copy of the CD with every filename lowercased must render the same frame
+# as the CD itself. The test copies the CD, so it only runs when SWCHESS_CD_DIR
+# points at a directory that exists.
+if(EXISTS "${SWCHESS_CD_DIR}")
+  add_test(NAME assets.lowercase_cd
+           COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/tests/lowercase_cd.py"
+                   $<TARGET_FILE:swchess> "${SWCHESS_CD_DIR}"
+                   "${CMAKE_SOURCE_DIR}/assets")
+endif()
