@@ -1,0 +1,89 @@
+# Builds the game and the review viewer on the four systems the packaging plan
+# supports, and runs the tests that read nothing from the original CD.
+#
+# No job here has the CD files. The chess rules test is the only test that
+# needs none of them, so it is the only one these jobs run. The oracle tests
+# and the gameplay tests stay on machines whose owner supplies their own CD.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS arm64
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: brew install ninja
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --target swchess swchess-viewer chess_perft_test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -R chess_perft_test
+
+  ubuntu:
+    name: Ubuntu 24.04 x64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # SDL is built from the pinned source archive, so it needs the headers
+      # for the systems it talks to: audio, X11, Wayland, input and graphics.
+      - name: Install the build tools and the SDL headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config zlib1g-dev \
+            libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev \
+            libudev-dev libdbus-1-dev libdecor-0-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --target swchess swchess-viewer chess_perft_test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -R chess_perft_test
+
+  fedora:
+    name: Fedora 44 x64
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+      # Fedora packages SDL3, so this job builds against the system copy and
+      # checks the SWCHESS_VENDOR_DEPS=OFF path at the same time.
+      - name: Install the Fedora development packages
+        run: |
+          dnf install -y gcc-c++ cmake ninja-build git python3 \
+            SDL3-devel json-devel zlib-devel
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+             -DSWCHESS_VENDOR_DEPS=OFF -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --target swchess swchess-viewer chess_perft_test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -R chess_perft_test
+
+  windows:
+    name: Windows x64 with MSVC
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open the MSVC command environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --target swchess swchess-viewer chess_perft_test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -R chess_perft_test
