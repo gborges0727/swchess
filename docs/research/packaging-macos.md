@@ -599,3 +599,42 @@ Shell checks on this SSH machine cannot substitute for that acceptance test.
 - Static SDL is the recommended default. A measured size comparison may favor sharing SDL across the game, viewer, and enhancement helpers.
 - macOS 11.0 is the proposed application minimum. The complete application has not been tested on macOS 11 or Intel hardware here.
 - Bundled native RIFE is the proposed enhancement mechanism. Model redistribution terms, temporary disk usage, and Intel GPU behavior need verification before promising the feature on every supported Mac.
+
+- The rife-v4.6 weights carry no license of their own. `models/rife-v4.6/` in the
+  pinned rife-ncnn-vulkan checkout holds `flownet.bin` and `flownet.param` and
+  nothing else. No license, readme, or attribution file sits beside them, and
+  none sits anywhere else under `models/`.
+
+  The one license in that package is the MIT license at the root of the
+  repository, "The MIT License (MIT), Copyright (c) 2020 nihui". It grants the
+  right to use, copy, publish, distribute and sell the software, on the
+  condition that the copyright notice travels with every copy. It names no
+  exception for the model folder, so on its own wording it covers the converted
+  weights as well as the code.
+
+  The README lists rife-v4.6 as upstream version 4.6 and names
+  https://github.com/hzwer/arXiv2020-RIFE as the original project. It does not
+  say what that project permits. So the only written permission to redistribute
+  these weights comes from the person who converted them, not from the people
+  who trained them. Read the upstream terms and write them here before the
+  weights ship inside an application.
+
+  `tools/rife/build.sh` now copies the MIT license to
+  `.cache/rife/bin/rife-ncnn-vulkan.LICENSE`, so the packaging lane has the
+  notice it must carry.
+
+- The RIFE binary now declares macOS 11.0 as its minimum, but Homebrew's
+  MoltenVK 1.4.2 was built for macOS 12.0. The linker reports the mismatch and
+  links anyway. So the binary claims macOS 11 while carrying code compiled for
+  macOS 12, and no one has run it on macOS 11. Build MoltenVK from source at
+  the chosen minimum, or raise the minimum to 12.0, before promising macOS 11.
+
+- The built binary is already relocatable on Apple silicon. It loads Metal,
+  QuartzCore, CoreGraphics, Cocoa, IOKit, IOSurface, Foundation, CoreFoundation,
+  AppKit, libc++ and libSystem, all of them from `/System/Library` or
+  `/usr/lib`, and it carries no runpath. MoltenVK is compiled into it. So
+  packaging copies one file and rewrites no load command.
+  `tools/rife/build.sh` checks all three after every build. It stops the build
+  if the binary loads a library from anywhere else, if it grows a runpath, or
+  if MoltenVK turns up as a separate library. Intel graphics and temporary disk
+  use are still unmeasured.

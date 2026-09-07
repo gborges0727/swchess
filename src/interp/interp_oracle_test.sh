@@ -6,10 +6,14 @@
 #
 # It interpolates BBWB and BNWN again and compares every frame with the ones
 # already in the cache. RIFE gives the same answer twice on the same GPU, so
-# the frames have to match byte for byte. The manifest is compared with the
-# three fields that record the run itself blanked out: the repository commit,
-# the example RIFE command, which names the working directory of this run, and
-# the wall clock time.
+# the frames have to match byte for byte. The manifest is compared with four
+# fields blanked out, because each one records the run rather than its result.
+# Those are the repository commit, the example RIFE command, which names this
+# run's working directory, the wall clock time, and the hash of the RIFE
+# binary. That last hash changes every time tools/rife/build.sh runs again.
+# The frames matched across two such builds, one targeting macOS 26 and one
+# targeting macOS 11, so a different binary hash is not a different picture.
+# The test says out loud whether the two runs used the same binary.
 set -uo pipefail
 
 if [ $# -ne 5 ]; then
@@ -36,7 +40,12 @@ mkdir -p "$scratch"
 blank() {
   sed -e 's/"commit": .*/"commit": null,/' \
       -e 's#"rife_example": .*#"rife_example": "",#' \
+      -e 's/"binary_sha256": .*/"binary_sha256": "",/' \
       -e 's/"wall_seconds": .*/"wall_seconds": 0/' "$1"
+}
+
+hashOf() {
+  grep -o '"binary_sha256": "[a-f0-9]*"' "$1" | head -1
 }
 
 status=0
@@ -73,7 +82,12 @@ for capture in BBWB BNWN; do
     status=1
     continue
   fi
-  echo "ok   $capture: the manifest matches apart from the commit, the example command and the run time"
+  echo "ok   $capture: the manifest matches apart from the four fields that record the run"
+  if [ "$(hashOf "$stored/manifest.json")" = "$(hashOf "$fresh/manifest.json")" ]; then
+    echo "     both runs used the same RIFE binary"
+  else
+    echo "     the two runs used different RIFE builds and produced the same frames"
+  fi
 
   if ! "$interpolate" --check "$fresh" > "$scratch/$capture.check" 2>&1; then
     echo "FAIL $capture: the fresh output does not pass its own checks"
