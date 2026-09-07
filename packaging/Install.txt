@@ -1,0 +1,22 @@
+Star Wars Chess for macOS
+
+To install the game, drag "Star Wars Chess" onto the Applications folder in
+this window. You can also put it in the Applications folder inside your home
+folder if you cannot write to the main one. Open it from there, not from this
+disk image, then eject the disk image.
+
+You need your own copy of the original Star Wars Chess CD. This download
+contains none of the game's artwork, sounds or data. Copy the CD to a folder
+on your Mac and keep that folder in place. The game reads from it every time
+you play.
+
+The first time you open the game it asks you to pick that folder. It saves
+your choice, so later launches go straight to the board. Pick the folder that
+holds XCHESS.EXE.
+
+The game writes your settings and saved games to the Library folder in your
+home folder, under Application Support. Replacing the app with a newer
+version leaves those files alone.
+
+The code in this download is original work. The artwork, sounds and binaries
+of Star Wars Chess belong to Lucasfilm and Software Toolworks.

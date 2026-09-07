@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The game asks the system for nothing beyond reading files the player
+       picks. It runs no downloaded code, uses no camera or microphone, and
+       opens no network connection. So it claims no entitlement. Keep this
+       dictionary empty unless a real requirement appears, and never add
+       com.apple.security.get-task-allow to a release build. -->
+</dict>
+</plist>
