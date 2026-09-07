@@ -206,6 +206,18 @@ CaptureTimeline loadCapture(const std::string& cdDir, const std::string& rawName
     // Walk the loop in FUN_1058_0a0a. Each iteration starts at t0, may block on
     // a sound, then draws and waits until t0 plus the frame delay. Index 0 is
     // decoded and its sound starts, but it never reaches the screen.
+    //
+    // This loop differs from the original in one place. The guard at
+    // 1058:0add skips both the draw and the frame delay for index 0, so the
+    // original puts pose 1 on the screen at time 0. Here index 0 spends a
+    // frame delay like every other iteration, which starts every pose 120
+    // milliseconds later and leaves the canvas empty for the first frame. The
+    // whole film still runs the same length in 70 of the 72 captures, because
+    // the hold outlasts the frame delay. WKBK and WQBR set hold=100, shorter
+    // than the 120 millisecond delay, and there this loop runs 20
+    // milliseconds long. Moving index 0 would move every pose time, and the
+    // generated 60 frames per second pictures under assets/captures were
+    // rendered against these times, so the two have to move together.
     std::int64_t t0 = 0;
     bool waitPending = false;
     std::int64_t pendingEndMs = 0;

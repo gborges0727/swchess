@@ -86,12 +86,14 @@ def resolve_final_wav(raw, sound_index):
 def build_timing(entries, frame_delay, hold_ms, final_wav):
     """Walk the timeline the way FUN_1058_0a0a does and time every pose.
 
-    Pose 0 is decoded but never drawn, yet its iteration still spends a full
-    frame_delay (and blocks on its own sound the same as any other pose)
-    before the loop moves on, so every later pose lands frame_delay later than
-    it would if pose 0's iteration were skipped outright. This mirrors
-    src/anim/capture.cpp's loop exactly: the per-iteration step is
-    max(block, frame_delay) whether or not that iteration draws.
+    Pose 0 is decoded but never drawn. Here its iteration still spends a full
+    frame_delay, and it blocks on its own sound the same as any other pose, so
+    every later pose lands frame_delay later than it would otherwise. The
+    original does not do that: the guard at 1058:0add skips the draw and the
+    frame delay together, so pose 1 stands on the screen at time 0. This module
+    and src/anim/capture.cpp keep the same per-iteration step, max(block,
+    frame_delay) whether or not that iteration draws, and the comment in
+    capture.cpp says why the two stay as they are.
 
     Every sound carries its own t_ms, the millisecond the original calls
     sndPlaySound. A sync sound starts at the top of its iteration and blocks,

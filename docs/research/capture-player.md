@@ -28,6 +28,10 @@ and the segment-to-file-offset table are in `.cache/ghidra/`.
 | Picks the next capture for the cheat demo | `FUN_1008_588a` @ `1008:588a` | `0xa34a` |
 | Sets the capture code after a real move | `FUN_1008_183f` @ `1008:183f` | `0x62ff` |
 | Sets the capture code for checkmate | `FUN_1008_1745` @ `1008:1745` | `0x6205` |
+| Plays the white king's extra line | `FUN_1008_1694` @ `1008:1694` | `0x6154` |
+| Draws one walk frame and repeats the sound | `FUN_1068_0fe6` @ `1068:0fe6` | `0x1f5e6` |
+| Draws one turn frame and repeats the sound | `FUN_1068_1140` @ `1068:1140` | `0x1f740` |
+| The twelve move sound names | `DS:0x58` | `0x33c18` |
 
 `XCHESS.EXE` imports eleven modules, including `CWDib`, but the capture player never
 calls into it. The transparent blit is the routine at `1050:0000` inside `XCHESS.EXE`
@@ -257,6 +261,24 @@ exceptions listed in `docs/plan.md` section 2 settles all three.
 All three are silent in the shipped game. Substituting the near-miss names would add
 sounds the original never made.
 
+The name in the INI is the whole lookup. There is no ordinal table, no per-piece table
+and no string table inside a `RES*.DLL`. Three captures show it. `BB.INI:[BBWB_003]`
+writes `wav=irregulr.wav` and the resource is `IRREGULR.WAV`. `WP.INI:[WPBP_008]` writes
+`wav=ricochet.wav` and the resource is `RICOCHET.WAV`. `BK.INI:[BKWQ_042]` writes
+`wav=leia1.wav` and the resource is `LEIA1.WAV`. Only `SWCAUDIO.DLL` holds resources of
+type `WAVE`. Every piece DLL holds bitmaps and the four `RES*.DLL` hold string tables.
+
+Only one capture sound is audible at a time. `FUN_1058_0a0a` calls `sndPlaySound` at
+`1058:0a9d` with flags 4 for a `pause=1` cue and flags 5 for every other cue. Flag 0x10
+is `SND_NOSTOP`. Neither value carries it, so each call stops the sound still playing.
+`BBWB` sounds `CLANK3.WAV` on poses 39, 44, 47 and 48, and that clip runs 2593
+milliseconds. Those poses stand 120 to 600 milliseconds apart, so the original cuts three
+of the four short and never lets two sound together.
+
+The player also silences the move sound before its first frame. `FUN_1058_0a0a` opens at
+`1058:0a19` with `FUN_1008_1519(0, 0, 0)`, which reaches `sndPlaySound(NULL,
+SND_NODEFAULT)` at `1008:1591` and stops whatever the walk left playing.
+
 While loading, at `1058:1249`, the player calls `FUN_1008_1519` once per timeline entry
 with the sentinel string `"!repeat!"` at `DS:0xcd`, which restarts the sound already in
 memory so the move sound keeps playing while the ANX loads.
@@ -384,7 +406,84 @@ Walk frames come from a per-piece DLL, not an ANX, and
 the INI keys are `count` plus names built from `"%s_%s%03d"` and `"%s_R%03d"` across
 eight compass directions.
 
-## 11. Unresolved
+## 11. The sounds outside a capture
+
+Every sound the game plays outside the capture player goes through `FUN_1008_1519` at
+`1008:1519`. That routine holds one loaded `WAVE` resource at a time. It reads the sound
+switch in `DAT_11d8_6889` first and returns without playing anything when the switch is
+off. Then it takes one of two paths.
+
+- The name `"!repeat!"`, the string at `DS:0xcd`, restarts the resource already in
+  memory. The code calls `sndPlaySound(NULL, SND_NODEFAULT | SND_NOSTOP)` at
+  `1008:1562`, which answers non-zero only when nothing is playing, and then calls
+  `sndPlaySound(pointer, SND_ASYNC | SND_NODEFAULT | SND_MEMORY)` at `1008:157c`. A
+  sound still running is left alone.
+- Any other name first calls `sndPlaySound(NULL, SND_NODEFAULT)`, which stops whatever
+  is playing, then frees the resource it held. `FUN_1008_0236` tests the name as a file
+  on disk. A file plays from disk with the caller's flags. Otherwise
+  `FindResource(SWCAUDIO.DLL, name, "WAVE")` finds it and `sndPlaySound` plays it with
+  the caller's flags plus `SND_MEMORY`.
+
+### The moving piece speaks
+
+`FUN_1008_183f` starts a sound for every move, at `1008:18e6`. It indexes a table of
+twelve far pointers at `DS:0x58` with `colour * 24 + piece * 4`. It passes flag 1, which
+is `SND_ASYNC`. The twelve slots hold `0xffff` on disk because the loader fills them.
+The type 3 relocation records of segment 60 point them at `DS:0x207` through `DS:0x270`.
+
+| Piece | White | Black |
+| --- | --- | --- |
+| King | `LUKE.WAV` | `EMPEROR.WAV` |
+| Queen | `LEIA.WAV` | `VADER.WAV` |
+| Rook | `YODA.WAV` | `ATAT.WAV` |
+| Bishop | `C3P0.WAV` | `BOBA.WAV` |
+| Knight | `CHEWIE.WAV` | `SAND.WAV` |
+| Pawn | `R2D2.WAV` | `STORM.WAV` |
+
+That order matches the piece DLL table, so the white rook plays `YODA.WAV` and walks out
+of `YO.DLL`. The sound starts before anything walks and before the code decides whether
+a capture follows, so a move with the films switched off still speaks.
+
+### The walk keeps it going
+
+`FUN_1068_0fe6`, the walk stepper, calls `FUN_1008_1519("!repeat!", 0)` at `1068:1099`
+once per frame, and `FUN_1068_1140`, the turn-in-place stepper, does the same at
+`1068:1247`. A frame lasts 100 milliseconds, so the piece's line restarts on the first
+100 millisecond boundary after it ends. It sounds for the whole walk that way. No walk
+INI names a sound and no piece DLL holds a `WAVE` resource, so the game has no footstep
+and no slide sound. The character's voice is the whole of it.
+
+Two loaders call `"!repeat!"` for the same reason. `FUN_1058_0e15` calls it once per
+timeline entry at `1058:1249` while it reads the ANX, and `FUN_1068_01d5` calls it once
+per walk frame it loads at `1068:04d4`. Both keep the move sound alive across a load
+that takes time.
+
+The move sound ends in one of two places. When the move takes nothing, `FUN_1008_183f`
+calls `FUN_1008_1519(0, 0, 0)` and the sound stops. When the move takes
+something, `FUN_1058_0a0a` stops it before the film's first frame instead.
+
+### The events that have their own sound
+
+- Checkmate. `FUN_1008_1745` plays `WHTVIC.WAV`, named at `DS:0x340`, when white mates,
+  and `BLKVIC.WAV` at `DS:0x34b` when black does, both with flag 1. Both sit on the CD
+  as loose files, so `FUN_1008_0236` finds them on disk.
+- A white king that captures or mates. `FUN_1008_1694` runs only when the capture code
+  starts `WK`. It draws an extra sprite 20 pixels from the king, plays `BEN2.WAV` with
+  flag 0, which is `SND_SYNC` and freezes the game until the line ends, and then plays
+  `LUKE.WAV` with flag 1.
+- The title screens. `FUN_1070_030a` plays `STWPRES.WAV` and then `SWTHEME.WAV` when the
+  opening crawl starts, and `SWTHEME.WAV` again for the credit roll. `WM_DESTROY` plays
+  `ENERGIZE.WAV`.
+
+### The events that have no sound
+
+`XCHESS.EXE` spells 21 WAV names in its data segment, 19 of them distinct, and no more.
+An illegal move, a check, a promotion, a draw and a button click all play nothing. The words `capture`,
+`illegal`, `check`, `checkmate`, `draw` and `promote` do sit together at `DS:0x535e`
+through `DS:0x539a`, but they are item names the `TWRXDDE` remote-control interface
+accepts under its `CHESSSND` topic, not sounds this program plays.
+
+## 12. Unresolved
 
 - `loop_delay` in `[demo]` reaches `DAT_11d8_00dc` at `1008:5809`. The timer that uses it
   is untraced, so its units and the meaning of the `-1` default are unproven.
@@ -400,3 +499,5 @@ eight compass directions.
 - `FUN_1010_1928` decodes the escape-byte runs and pads rows to a 4-byte stride, matching
   the decoder in `docs/plan.md` section 2. Ghidra's pointer typing inside it is
   unreliable, so the format was not re-derived from the code.
+- Who plays `BRTH1.WAV`, the name at `DS:0x2126`. No call site turned up in the
+  decompiled code, so it may be data nothing reads.
