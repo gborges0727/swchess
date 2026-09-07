@@ -107,6 +107,15 @@ target_compile_options(swchess PRIVATE ${SWCHESS_WARNINGS})
 if(WIN32)
   set_target_properties(swchess PROPERTIES
     WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>)
+
+  # The icon Explorer draws on the exe, and the version fields the file
+  # properties dialog shows. windres reads swchess.ico out of the same
+  # folder as the .rc file, so tell it where that folder is.
+  enable_language(RC)
+  set(SWCHESS_RC "${CMAKE_SOURCE_DIR}/packaging/windows/swchess.rc")
+  set_source_files_properties("${SWCHESS_RC}" PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/packaging/windows")
+  target_sources(swchess PRIVATE "${SWCHESS_RC}")
 endif()
 
 # The oracle tests read the original CD. A checkout carries none of those

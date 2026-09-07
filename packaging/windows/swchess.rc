@@ -1,0 +1,48 @@
+// The Windows resources for Star Wars Chess.
+//
+// The first entry gives the program its icon. Windows shows the lowest
+// numbered icon in Explorer and in the title bar, so this one has to stay
+// first.
+//
+// The version block is what Explorer shows on the Details tab of the file
+// properties. Windows SmartScreen also reads the company and product names
+// when it warns about an unsigned program.
+
+#include <windows.h>
+
+1 ICON "swchess.ico"
+
+#ifndef SWCHESS_VERSION_STRING
+#define SWCHESS_VERSION_STRING "0.6.1"
+#endif
+#ifndef SWCHESS_VERSION_COMMAS
+#define SWCHESS_VERSION_COMMAS 0,6,1,0
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION SWCHESS_VERSION_COMMAS
+PRODUCTVERSION SWCHESS_VERSION_COMMAS
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "FairLine"
+            VALUE "FileDescription", "Star Wars Chess"
+            VALUE "FileVersion", SWCHESS_VERSION_STRING
+            VALUE "InternalName", "swchess"
+            VALUE "OriginalFilename", "Star Wars Chess.exe"
+            VALUE "ProductName", "Star Wars Chess"
+            VALUE "ProductVersion", SWCHESS_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

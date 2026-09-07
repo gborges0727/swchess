@@ -30,22 +30,14 @@ std::string absoluteEnv(const char* name) {
 }
 #endif
 
+// Windows names its own directories through APPDATA and LOCALAPPDATA, so the
+// three functions below never ask for the home directory there. Compiling
+// this function on Windows would only raise an unused-function warning.
+#ifndef _WIN32
 std::string homeDir() {
-#ifdef _WIN32
-    const std::string profile = env("USERPROFILE");
-    if (!profile.empty()) {
-        return profile;
-    }
-    const std::string drive = env("HOMEDRIVE");
-    const std::string path = env("HOMEPATH");
-    if (!drive.empty() && !path.empty()) {
-        return drive + path;
-    }
-    return std::string();
-#else
     return env("HOME");
-#endif
 }
+#endif
 
 // SDL builds a directory under the place the operating system reserves for an
 // application. The three functions below fall back to it when the environment
