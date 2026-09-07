@@ -130,7 +130,7 @@ endif()
 if(APPLE)
   set(SWCHESS_BUNDLE_NAME "Star Wars Chess")
   set(SWCHESS_BUNDLE_ID "com.fairline.swchess")
-  set(SWCHESS_BUNDLE_VERSION "0.6.3")
+  set(SWCHESS_BUNDLE_VERSION "0.6.4")
   set(SWCHESS_GAME_BINARY "${SWCHESS_BUNDLE_NAME}")
   set(SWCHESS_ICON_NAME "StarWarsChess")
   # The oldest macOS the bundle claims to run on. scripts/build-app.sh passes
