@@ -545,18 +545,37 @@ int main(int argc, char** argv) {
                 knight.settings.cadence = swchess::anim::Cadence::Interpolated60;
                 knight.moves =
                     swchess::game::splitScript("e2e4 e7e5 g1f3 b8c6 f3e5 c6e5");
-                knight.dumpAtMs = 20000;
                 knight.dumpPath = outDir + "/game_test_bnwn_interpolated.ppm";
+                // The five walks before the second film take as long as the
+                // pace in walk.h says, so a first run finds when that film
+                // starts and the second run dumps a picture 1000 ms into it.
+                const swchess::game::ScriptResult timing = swchess::game::runScript(knight);
+                std::int64_t secondFilmMs = -1;
+                int films = 0;
+                swchess::game::AnimState last = swchess::game::AnimState::Idle;
+                for (const swchess::game::StateSample& sample : timing.states) {
+                    if (sample.state == swchess::game::AnimState::Capturing &&
+                        last != swchess::game::AnimState::Capturing) {
+                        ++films;
+                        if (films == 2) {
+                            secondFilmMs = sample.timeMs;
+                            break;
+                        }
+                    }
+                    last = sample.state;
+                }
+                check(secondFilmMs >= 0, "the knight line plays a second film");
+                knight.dumpAtMs = secondFilmMs + 1000;
                 const swchess::game::ScriptResult took = swchess::game::runScript(knight);
                 check(took.rejected.empty(), "the rules module took every move of the knight line");
-                check(took.dumped, "the knight line composited a picture at 20000 ms");
+                check(took.dumped, "the knight line composited a picture inside the second film");
                 check(took.dumpState == swchess::game::AnimState::Capturing,
-                      "the knight line is playing its film at 20000 ms");
+                      "the knight line is playing its film 1000 ms in");
                 check(took.dumpCapture == "BNWN",
-                      "the film at 20000 ms is the black knight taking the white knight");
+                      "the second film is the black knight taking the white knight");
                 check(took.dumpCadence == swchess::anim::Cadence::Interpolated60,
                       "BNWN draws its interpolated frames rather than falling back");
-                check(took.dumpHasFrame, "an interpolated frame stands at 20000 ms");
+                check(took.dumpHasFrame, "an interpolated frame stands 1000 ms in");
                 check(took.dumpFrameKind != "blank" && !took.dumpFrameKind.empty(),
                       "that frame carries a picture");
             }
