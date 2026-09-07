@@ -92,6 +92,18 @@ void insertByDepth(std::vector<Sprite>& sprites, const Sprite& sprite) {
     sprites.insert(sprites.begin() + static_cast<std::ptrdiff_t>(at), sprite);
 }
 
+const char* moveSoundName(chess::Color color, chess::PieceType type) {
+    // FUN_1008_183f reads this table of twelve far pointers at 11d8:0058,
+    // indexed as colour * 24 + piece * 4, and hands the name it finds to
+    // FUN_1008_1519 with flag 1, which is SND_ASYNC. The relocation records of
+    // segment 60 point the twelve slots at 11d8:0207 through 11d8:0270.
+    static const char* const kNames[12] = {
+        "LUKE.WAV", "LEIA.WAV", "YODA.WAV", "C3P0.WAV", "CHEWIE.WAV", "R2D2.WAV",
+        "EMPEROR.WAV", "VADER.WAV", "ATAT.WAV", "BOBA.WAV", "SAND.WAV", "STORM.WAV",
+    };
+    return kNames[static_cast<int>(color) * 6 + static_cast<int>(type)];
+}
+
 }  // namespace
 
 const chess::PieceType kPromotionChoices[4] = {
@@ -146,7 +158,22 @@ GameSession::GameSession(std::string cdDir, std::string assetsDir, Settings sett
                     resource.sound.samples.size());
         clips_.emplace(resource.name, std::move(clip));
     }
+    // FUN_1008_1519 tries a name as a file on disk before it tries it as a
+    // resource, so the four loose WAV files on the CD answer to the same
+    // lookup. The checkmate sounds are two of them.
+    for (const char* name : kLooseWavFiles) {
+        WaveSound sound = loadWavFile(resolveCdFile(cdDir_, name).string());
+        audio::Clip clip;
+        clip.spec.channels = sound.channels > 0 ? sound.channels : 1;
+        clip.spec.freq = sound.sampleRate > 0 ? static_cast<int>(sound.sampleRate) : 22050;
+        clip.spec.format = sound.bitsPerSample == 16 ? SDL_AUDIO_S16LE : SDL_AUDIO_U8;
+        clip.pcm.resize(sound.samples.size());
+        std::memcpy(clip.pcm.data(), sound.samples.data(), sound.samples.size());
+        clips_.emplace(name, std::move(clip));
+    }
     scheduler_.setMixer(&mixer_);
+    // One capture sound at a time, the way sndPlaySound plays them.
+    scheduler_.setReplacePrevious(true);
     resetDisplay();
 }
 
@@ -275,6 +302,7 @@ const char* seatName(Seat seat) {
 
 void GameSession::newGame() {
     mixer_.stopAll();
+    stopVoice();
     capturePlayer_.start(nullptr, 0);
     timeline_.reset();
     interp_.reset();
@@ -628,6 +656,24 @@ bool GameSession::beginMove(chess::Move move, std::int64_t nowMs) {
         startInterpLoad(captureCode(attacker_, defender_));
     }
 
+    // The moving piece speaks. FUN_1008_183f starts the piece's own WAV before
+    // it walks anything, and every walk frame restarts it once it has ended,
+    // so one character's line covers the whole move.
+    stopVoice();
+    voiceRepeat_ = moveSoundName(mover->color, mover->type);
+    if (moveCaptures_ && attacker_.color == chess::Color::White &&
+        attacker_.type == chess::PieceType::King) {
+        // FUN_1008_1694 fires only for a white king that takes something. It
+        // plays BEN2.WAV with SND_SYNC, which stops the game until the line
+        // ends, and then starts LUKE.WAV. Here BEN2.WAV plays first and
+        // LUKE.WAV follows it without freezing the board.
+        voiceQueue_ = voiceRepeat_;
+        voiceRepeat_.clear();
+        playVoice("BEN2.WAV");
+    } else {
+        playVoice(voiceRepeat_);
+    }
+
     for (std::optional<chess::Piece>& slot : display_) {
         slot.reset();
     }
@@ -698,8 +744,26 @@ void GameSession::startCapture(std::int64_t nowMs) {
     timeline_ = std::make_unique<anim::CaptureTimeline>(
         anim::loadCapture(cdDir_, captureName_, anim::sharedSoundCatalog(cdDir_)));
 
+    // FUN_1058_0a0a calls FUN_1008_1519(0,0,0) before its first frame, which
+    // is sndPlaySound(NULL, SND_NODEFAULT). The move sound stops there.
+    stopVoice();
+
     std::vector<audio::Cue> cues;
     cueNames_.clear();
+    // Pose 0 never reaches the screen, but the original starts its cue all the
+    // same, at time zero. Three captures carry one: BPWN, BQWQ and WPBQ.
+    for (const anim::CaptureSound& pre : timeline_->preSounds) {
+        if (!pre.resolved) {
+            continue;
+        }
+        auto clip = clips_.find(pre.resource);
+        if (clip == clips_.end()) {
+            continue;
+        }
+        cues.push_back(
+            audio::Cue{pre.startMs, &clip->second, audio::Channel::Effects, 1.0f, false});
+        cueNames_.push_back(pre.resource);
+    }
     for (const anim::CapturePose& pose : timeline_->poses) {
         if (!pose.hasSound || !pose.sound.resolved) {
             continue;
@@ -728,6 +792,16 @@ void GameSession::startCapture(std::int64_t nowMs) {
     // Both fighters leave the board for the film. The attacker is not on it
     // yet, and the defender hides where it stands.
     hidden_ = defenderSquare_;
+    startCapturePlayer(nowMs);
+    // Reading the ANX and the generated frames above spent real milliseconds
+    // that the film must not count. The next advance starts the clock again,
+    // so pose 1 and the first cue land on the first frame the player draws.
+    captureAnchored_ = false;
+    captureDraw_ = anim::DrawState{};
+    state_ = AnimState::Capturing;
+}
+
+void GameSession::startCapturePlayer(std::int64_t nowMs) {
     try {
         capturePlayer_.start(timeline_.get(), interp_.has_value() ? &*interp_ : nullptr, nowMs);
     } catch (const std::exception& problem) {
@@ -741,23 +815,30 @@ void GameSession::startCapture(std::int64_t nowMs) {
     capturePlayer_.setCadence(capturePlayer_.interp() != nullptr
                                   ? settings_.cadence
                                   : anim::Cadence::Original120ms);
-    captureDraw_ = anim::DrawState{};
-    state_ = AnimState::Capturing;
 }
 
 void GameSession::finishMove() {
     mixer_.stopAll();
+    stopVoice();
     capturePlayer_.start(nullptr, 0);
     timeline_.reset();
     interp_.reset();
     interpLoading_ = false;
     captureName_.clear();
     captureDraw_ = anim::DrawState{};
+    captureAnchored_ = true;
     legs_.clear();
     leg_ = 0;
     moveCaptures_ = false;
     resetDisplay();
     state_ = game_.result() == chess::GameResult::Ongoing ? AnimState::Idle : AnimState::GameOver;
+    if (game_.result() == chess::GameResult::Checkmate) {
+        // FUN_1008_1745 plays WHTVIC.WAV at 11d8:0340 when white mates and
+        // BLKVIC.WAV at 11d8:034b when black does, both with SND_ASYNC. The
+        // side still to move is the one that was mated.
+        playVoice(game_.position().sideToMove() == chess::Color::White ? "BLKVIC.WAV"
+                                                                      : "WHTVIC.WAV");
+    }
 }
 
 bool GameSession::skipCapture(std::int64_t nowMs) {
@@ -785,6 +866,18 @@ void GameSession::advanceAnimation(std::int64_t nowMs) {
     }
     if (state_ == AnimState::Walking) {
         anim::WalkUpdate update = walker_.advance(nowMs_);
+        // One walk frame stands for 100 ms, and FUN_1068_0fe6 runs the
+        // "!repeat!" call once per frame. Counting the frames here keeps the
+        // restart on the same 100 ms grid however often the caller advances.
+        // The frame the walk ends on starts nothing, because what comes next
+        // either silences the voice or starts the film.
+        if (!update.finished) {
+            const std::int64_t frame = walker_.elapsedMs() / anim::kWalkFrameMs;
+            if (frame != voiceFrame_) {
+                voiceFrame_ = frame;
+                pumpVoice();
+            }
+        }
         if (update.draw.visible) {
             walkDraw_ = update.draw;
         }
@@ -808,8 +901,17 @@ void GameSession::advanceAnimation(std::int64_t nowMs) {
         return;
     }
     if (state_ == AnimState::Capturing) {
+        if (!captureAnchored_) {
+            // The first advance after the load is where the film begins.
+            captureAnchored_ = true;
+            startCapturePlayer(nowMs_);
+            scheduler_.reset();
+            cuesReported_ = 0;
+        }
         anim::PlayerUpdate update = capturePlayer_.advance(nowMs_);
-        scheduler_.advance(nowMs_);
+        // Cue times count from the first frame of the film, so the scheduler
+        // reads the player's own elapsed time and not the animation clock.
+        scheduler_.advance(capturePlayer_.elapsedMs());
         const std::vector<std::size_t>& fired = scheduler_.firedOrder();
         while (cuesReported_ < fired.size()) {
             const std::size_t cue = fired[cuesReported_];
@@ -944,6 +1046,47 @@ std::string GameSession::stringBytes(int id) const {
         return std::string(found->second.get(id));
     }
     return fallbackText(id);
+}
+
+void GameSession::playVoice(const std::string& name) {
+    auto found = clips_.find(name);
+    if (found == clips_.end()) {
+        return;
+    }
+    if (voice_ != audio::kNoClip) {
+        mixer_.stop(voice_);
+    }
+    voice_ = mixer_.play(found->second, audio::Channel::Effects);
+    voiceName_ = name;
+    ++soundPlays_[name];
+    soundLog_.push_back(SoundPlay{name, nowMs_});
+}
+
+void GameSession::pumpVoice() {
+    if (voice_ != audio::kNoClip && mixer_.isPlaying(voice_)) {
+        return;
+    }
+    if (!voiceQueue_.empty()) {
+        const std::string next = voiceQueue_;
+        voiceQueue_.clear();
+        voiceRepeat_ = next;
+        playVoice(next);
+        return;
+    }
+    if (!voiceRepeat_.empty()) {
+        playVoice(voiceRepeat_);
+    }
+}
+
+void GameSession::stopVoice() {
+    if (voice_ != audio::kNoClip) {
+        mixer_.stop(voice_);
+        voice_ = audio::kNoClip;
+    }
+    voiceName_.clear();
+    voiceRepeat_.clear();
+    voiceQueue_.clear();
+    voiceFrame_ = -1;
 }
 
 const audio::Clip* GameSession::clip(const std::string& name) const {

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -188,9 +189,14 @@ int main(int argc, char** argv) {
               "the mating capture runs walking, then capturing, then game over");
 
         // Every cue of the queen's film fired, each exactly as often as the
-        // timeline lists it.
+        // timeline lists it, and the mate added its victory sound after it.
         const swchess::anim::CaptureTimeline queen = swchess::anim::loadCapture(cdDir, "WQBP");
         std::map<std::string, int> expected;
+        for (const swchess::anim::CaptureSound& pre : queen.preSounds) {
+            if (pre.resolved) {
+                ++expected[pre.resource];
+            }
+        }
         for (const swchess::anim::CapturePose& pose : queen.poses) {
             if (pose.hasSound && pose.sound.resolved) {
                 ++expected[pose.sound.resource];
@@ -200,7 +206,17 @@ int main(int argc, char** argv) {
             ++expected[queen.endSound.resource];
         }
         check(!expected.empty(), "WQBP carries at least one sound cue");
-        check(mated.soundPlays == expected,
+        // White mates here, so FUN_1008_1745's WHTVIC.WAV plays when the film
+        // ends. The moves before the film start the piece voices instead, and
+        // those all sound before the film begins.
+        ++expected["WHTVIC.WAV"];
+        std::map<std::string, int> duringFilm;
+        for (const swchess::game::GameSession::SoundPlay& play : mated.soundLog) {
+            if (play.timeMs >= lastCaptureStart(mated)) {
+                ++duringFilm[play.name];
+            }
+        }
+        check(duringFilm == expected,
               "every cue of WQBP started once for each time the timeline lists it");
 
         // A plain capture in the middle of a game: the white e pawn takes the
@@ -290,7 +306,27 @@ int main(int argc, char** argv) {
         check(captureCount(silent) == 0, "no film plays when captures are off");
         check(silent.finalFen == took.finalFen,
               "the position is the same whether or not the film plays");
-        check(silent.soundPlays.empty(), "no cue fires when captures are off");
+        // The films are off, so no film cue sounds. The three moves still
+        // speak, because FUN_1008_183f starts the piece's own WAV before it
+        // looks at whether a capture follows.
+        std::map<std::string, int> voicesOnly;
+        for (const swchess::game::GameSession::SoundPlay& play : silent.soundLog) {
+            ++voicesOnly[play.name];
+        }
+        check(voicesOnly == silent.soundPlays, "the log and the counts agree");
+        check(voicesOnly.count("R2D2.WAV") == 1 && voicesOnly.count("STORM.WAV") == 1,
+              "the white pawn and the black pawn both speak");
+        const std::set<std::string> pieceVoices = {
+            "LUKE.WAV", "LEIA.WAV",  "YODA.WAV", "C3P0.WAV", "CHEWIE.WAV", "R2D2.WAV",
+            "EMPEROR.WAV", "VADER.WAV", "ATAT.WAV", "BOBA.WAV", "SAND.WAV", "STORM.WAV"};
+        bool onlyVoices = true;
+        for (const auto& entry : voicesOnly) {
+            if (pieceVoices.count(entry.first) == 0) {
+                onlyVoices = false;
+                std::printf("unexpected sound %s\n", entry.first.c_str());
+            }
+        }
+        check(onlyVoices, "no cue of a capture film fires when captures are off");
 
         // Turning walking off slides the piece instead, which still commits
         // the same moves.

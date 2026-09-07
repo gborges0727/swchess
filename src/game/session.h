@@ -250,6 +250,10 @@ private:
     void startLeg(std::size_t index, std::int64_t nowMs);
     void finishLeg();
     void startCapture(std::int64_t nowMs);
+    // Anchors the capture player and its cadence at `nowMs`. startCapture
+    // calls it once with the time the load began, and the first advance after
+    // the load calls it again so the film clock counts no loading time.
+    void startCapturePlayer(std::int64_t nowMs);
     void finishMove();
     // Reads the interpolated frames of `captureName` on a worker thread while
     // the piece walks.
@@ -307,6 +311,8 @@ private:
     std::future<std::optional<anim::InterpSequence>> interpLoad_;
     bool interpLoading_ = false;
     bool waitForInterp_ = false;
+    // False between startCapture and the first advance that follows it.
+    bool captureAnchored_ = true;
 
     // The two seats and the two providers behind them. The human provider
     // holds the open request while a person is to move, and the engine holds
@@ -332,8 +338,31 @@ private:
     // Whether the commit the human provider just answered reached the board.
     bool commitOk_ = false;
 
+    // Starts `name` on the one voice the original has, stopping whatever that
+    // voice was playing. An unknown name leaves the voice silent.
+    void playVoice(const std::string& name);
+    // Runs the "!repeat!" rule of one walk frame: restart the move sound when
+    // it has finished, or start the queued sound when one is waiting.
+    void pumpVoice();
+    // Silences the voice and forgets what it was repeating.
+    void stopVoice();
+
     audio::Mixer mixer_;
     std::map<std::string, audio::Clip> clips_;
+    // The one sound the original ever has playing outside a capture film.
+    // FUN_1008_1519 keeps a single loaded resource and calls sndPlaySound
+    // without SND_NOSTOP, so a new sound always replaces the old one.
+    audio::ClipHandle voice_ = audio::kNoClip;
+    std::string voiceName_;
+    // What a walk frame restarts once the voice falls silent. The original
+    // calls FUN_1008_1519("!repeat!") from FUN_1068_0fe6 every 100 ms.
+    std::string voiceRepeat_;
+    // What starts as soon as the voice falls silent, once. This stands in for
+    // the blocking BEN2.WAV of a white king capture, which the original plays
+    // with SND_SYNC before it starts LUKE.WAV.
+    std::string voiceQueue_;
+    // The walk frame the repeat rule last ran on.
+    std::int64_t voiceFrame_ = -1;
     audio::CueScheduler scheduler_;
     std::vector<std::string> cueNames_;  // one per cue, in the scheduler's order
     std::size_t cuesReported_ = 0;
