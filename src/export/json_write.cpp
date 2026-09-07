@@ -1,6 +1,5 @@
 #include "export/json_write.h"
 
-#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -165,13 +164,19 @@ void appendValue(std::string& out, const Json& value, bool ensureAscii, int leve
 std::string pythonFloatRepr(double value) {
     // Ask for the shortest scientific form, which gives the digits and the
     // exponent separately, then lay them out the way Python does.
+    // std::to_chars for doubles needs macOS 13.3, and the app declares 11.0,
+    // so try each precision until the text reads back as the same double.
+    // The first one that does holds the shortest digits, which is what
+    // to_chars would have written.
     char buffer[64];
-    auto result = std::to_chars(buffer, buffer + sizeof(buffer), value,
-                                std::chars_format::scientific);
-    if (result.ec != std::errc()) {
-        throw std::runtime_error("cannot format a double");
+    std::string text;
+    for (int precision = 0; precision <= 17; ++precision) {
+        std::snprintf(buffer, sizeof(buffer), "%.*e", precision, value);
+        if (std::strtod(buffer, nullptr) == value) {
+            break;
+        }
     }
-    std::string text(buffer, result.ptr);
+    text = buffer;
 
     bool negative = false;
     std::size_t at = 0;
