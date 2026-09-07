@@ -532,6 +532,32 @@ void testOriginalEngineHint() {
     // The hint must not change the engine's own idea of the position.
     check(position.sideToMove() == swchess::chess::Color::White,
           "asking for a hint plays nothing");
+
+    // In book the hint takes the most played line, so it repeats.
+    const Book book = Book::load(cdFile("BOOK.DAT"));
+    const Position start = Position::start();
+    Move first{};
+    bool same = true;
+    for (int i = 0; i < 3; ++i) {
+        Move hint{};
+        bool answered = false;
+        engine->requestHint(start, static_cast<RequestId>(200 + i),
+                            [&](RequestId, Move m) {
+                                hint = m;
+                                answered = true;
+                            });
+        if (waitForAnswer(*engine, answered, 4000) < 0) {
+            check(false, "the hint from the start position comes back");
+            return;
+        }
+        if (i == 0) {
+            first = hint;
+        } else if (!(hint == first)) {
+            same = false;
+        }
+    }
+    check(same, "the hint repeats itself in the book");
+    check(first == book.probe(start).front(), "the hint names the most played book move");
 }
 
 void testOriginalEngineLevels() {

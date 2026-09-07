@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "engine/engine.h"
 #include "engine/original/book.h"
@@ -72,12 +73,12 @@ public:
 
     void requestMove(const chess::Position& position, chess::RequestId id,
                      chess::MoveCallback done) override {
-        start(position, id, std::move(done), true);
+        start(position, id, std::move(done), false);
     }
 
     void requestHint(const chess::Position& position, chess::RequestId id,
                      chess::MoveCallback done) override {
-        start(position, id, std::move(done), false);
+        start(position, id, std::move(done), true);
     }
 
     void cancel(chess::RequestId id) override {
@@ -127,7 +128,7 @@ public:
 
 private:
     void start(const chess::Position& position, chess::RequestId id, chess::MoveCallback done,
-               bool useBook) {
+               bool asHint) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             // A second request replaces the first, so the worker never holds
@@ -139,7 +140,7 @@ private:
             answer_.reset();
             cancelled_ = false;
             forced_ = false;
-            useBook_ = useBook;
+            asHint_ = asHint;
             hasJob_ = true;
         }
         wake_.notify_one();
@@ -149,7 +150,7 @@ private:
         while (true) {
             chess::Position position;
             Personality personality;
-            bool useBook = false;
+            bool asHint = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 wake_.wait(lock, [this] { return hasJob_ || quitting_; });
@@ -157,12 +158,21 @@ private:
                 hasJob_ = false;
                 position = pending_;
                 personality = personality_;
-                useBook = useBook_;
+                asHint = asHint_;
                 stop_.store(forced_, std::memory_order_relaxed);
             }
 
+            // In book, the move is a book move. A move to play is spread over
+            // the lines that reach the position, the way the original varied
+            // its openings. A hint takes the most played line instead, so
+            // asking twice gives the same answer.
             std::optional<chess::Move> chosen;
-            if (useBook) chosen = book_.pick(position, bookRandom_);
+            if (asHint) {
+                const std::vector<chess::Move> fromBook = book_.probe(position);
+                if (!fromBook.empty()) chosen = fromBook.front();
+            } else {
+                chosen = book_.pick(position, bookRandom_);
+            }
             if (!chosen) {
                 searcher_.setStyle(personality.primary);
                 const SearchResult found = searcher_.run(position, limitsFor(personality), stop_);
@@ -200,7 +210,7 @@ private:
     bool quitting_{false};
     bool cancelled_{false};
     bool forced_{false};
-    bool useBook_{true};
+    bool asHint_{false};
     chess::Position pending_{};
     chess::RequestId jobId_{0};
     chess::MoveCallback done_{};
