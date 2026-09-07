@@ -1,6 +1,7 @@
 #include "anim/walk.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <mutex>
@@ -348,6 +349,20 @@ WalkUpdate WalkPlayer::advance(std::int64_t nowMs) {
     }
     update.draw = positions_[at];
     update.finished = finished_;
+    // The enhanced cadence carries the piece between this point and the next
+    // one by the clock. The two points are eight pixels apart and 100 ms
+    // apart, so a caller drawing 60 times a second moves it about 1.3 pixels
+    // a frame instead of standing still for six frames and then jumping.
+    if (cadence_ == Cadence::Interpolated60 && at + 1 < positions_.size()) {
+        const double part = static_cast<double>(elapsedMs_ - static_cast<std::int64_t>(at) *
+                                                                 kWalkFrameMs) /
+                            static_cast<double>(kWalkFrameMs);
+        const WalkDraw& here = positions_[at];
+        const WalkDraw& next = positions_[at + 1];
+        update.draw.x = here.x + static_cast<int>(std::lround((next.x - here.x) * part));
+        update.draw.y = here.y + static_cast<int>(std::lround((next.y - here.y) * part));
+        update.draw.progress = here.progress + (next.progress - here.progress) * part;
+    }
     return update;
 }
 

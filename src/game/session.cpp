@@ -210,6 +210,9 @@ void GameSession::cycleLanguage() {
 void GameSession::setCadence(anim::Cadence cadence) {
     settings_.cadence = cadence;
     if (state_ != AnimState::Capturing) {
+    // The walker needs no generated pictures to move smoothly, so it takes
+    // the new cadence whether or not a walk is running.
+    walker_.setCadence(cadence);
         return;
     }
     // The player refuses the enhanced cadence when this capture has no
@@ -673,6 +676,7 @@ void GameSession::startLeg(std::size_t index, std::int64_t nowMs) {
     leg.fromDepth = from.depth;
     leg.toDepth = to.depth;
     walker_.start(leg.walk, from.x, from.y, to.x, to.y, nowMs);
+    walker_.setCadence(settings_.cadence);
     walkDraw_ = walker_.advance(nowMs).draw;
 }
 

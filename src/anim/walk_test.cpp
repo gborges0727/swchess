@@ -317,6 +317,43 @@ int main(int argc, char** argv) {
             previous = draw.pointIndex;
         }
 
+        // The enhanced cadence moves the piece by the clock instead of by the
+        // 100 ms tick. It takes the same time, it never steps backwards, and
+        // it stands on the tick's own point whenever the clock reaches a tick.
+        swchess::anim::WalkPlayer smooth;
+        smooth.setCadence(swchess::anim::Cadence::Interpolated60);
+        smooth.start(&atSouth, 100, 50, 100, 114, 0);
+        check(smooth.durationMs() == player.durationMs(),
+              "the smooth walk takes as long as the stepped one");
+        int previousY = 50;
+        int movedFrames = 0;
+        const std::int64_t stepMs = 1000 / 60;
+        for (std::int64_t ms = 0; ms <= smooth.durationMs(); ms += stepMs) {
+            const swchess::anim::WalkDraw draw = smooth.advance(ms).draw;
+            check(draw.y >= previousY, "the smooth walk never moves backwards");
+            check(draw.y <= 114, "the smooth walk never passes its target");
+            if (draw.y != previousY) {
+                ++movedFrames;
+            }
+            previousY = draw.y;
+        }
+        const swchess::anim::WalkDraw end = smooth.advance(smooth.durationMs()).draw;
+        check(smooth.isFinished(), "the smooth walk finishes on its own duration");
+        check(end.y == 114, "the smooth walk ends on the square it walked to");
+        check(previousY >= 106, "the smooth walk is nearly there one frame before the end");
+        // Nine steps of the stepped walk become more than forty moves here.
+        check(movedFrames > 30, "the smooth walk moves on most display frames");
+
+        swchess::anim::WalkPlayer onTicks;
+        onTicks.setCadence(swchess::anim::Cadence::Interpolated60);
+        onTicks.start(&atSouth, 100, 50, 100, 114, 0);
+        for (std::size_t i = 0; i < onTicks.positions().size(); ++i) {
+            const swchess::anim::WalkDraw draw =
+                onTicks.advance(static_cast<std::int64_t>(i) * 100).draw;
+            check(draw.x == onTicks.positions()[i].x && draw.y == onTicks.positions()[i].y,
+                  "the smooth walk reaches each 100 ms point on time");
+        }
+
         // A knight jumps two squares by one axis and one by the other, and it
         // walks the same straight line as everything else.
         swchess::anim::WalkSequence chewie =

@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "anim/player.h"
 #include "assets/piece_dll.h"
 
 namespace swchess::anim {
@@ -179,12 +180,17 @@ struct WalkDraw {
     // The walk frame. Null while sliding, which means the caller draws the
     // piece's ordinary sheet cell instead.
     const PieceBitmap* bitmap = nullptr;
-    int x = 0;  // the anchor the piece stands on, a point of the path
+    // The anchor the piece stands on. Under Original120ms this is a point of
+    // the path. Under Interpolated60 it sits between two of them, on the same
+    // straight line.
+    int x = 0;
     int y = 0;
     int width = 0;
     int height = 0;
     std::size_t stepIndex = 0;   // which walk frame, counting from 0
-    std::size_t pointIndex = 0;  // which path point the piece stands on
+    // Which path point the piece last stood on. Under Interpolated60 the
+    // anchor above has already moved past it toward the next one.
+    std::size_t pointIndex = 0;
     // How far along the path the piece has come, 0 at the first point and
     // 1 at the last. The caller mixes the two squares' depths with it.
     double progress = 0.0;
@@ -219,6 +225,16 @@ public:
     void start(const WalkSequence* sequence, int fromX, int fromY, int toX, int toY,
                std::int64_t nowMs);
 
+    // Picks how the piece moves between the 100 ms points of the path.
+    //
+    // Original120ms jumps the piece eight pixels every 100 ms, which is what
+    // the original does. Interpolated60 slides it between those two points by
+    // the clock, so a caller drawing at 60 frames per second moves it about
+    // 1.3 pixels a frame. Both take the same time and both stand on the same
+    // point whenever the clock reaches a 100 ms mark.
+    void setCadence(Cadence cadence) { cadence_ = cadence; }
+    Cadence cadence() const { return cadence_; }
+
     // Move the clock to `nowMs` and report the frame on screen. Time never
     // runs backwards here: a smaller `nowMs` than the last one leaves the
     // clock where it was.
@@ -247,6 +263,7 @@ private:
     const WalkSequence* sequence_ = nullptr;
     std::vector<PathPoint> path_;
     std::vector<WalkDraw> positions_;
+    Cadence cadence_ = Cadence::Original120ms;
     bool sliding_ = false;
     std::int64_t startedMs_ = 0;
     std::int64_t elapsedMs_ = 0;
