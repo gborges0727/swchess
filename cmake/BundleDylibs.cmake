@@ -8,6 +8,11 @@
 #
 # Anything under /usr/lib or /System belongs to macOS itself, so it stays
 # where it is. zlib comes from the SDK that way and is never copied.
+#
+# A release build links SDL statically, so the binary names no SDL dylib and
+# the copying loop below finds nothing to do. Only the signing step at the end
+# runs. Keep the script in the build for the SWCHESS_VENDOR_DEPS=OFF path,
+# where the game still loads Homebrew's SDL.
 
 if(NOT APP_BINARY OR NOT FRAMEWORKS_DIR)
   message(FATAL_ERROR "BundleDylibs.cmake needs APP_BINARY and FRAMEWORKS_DIR")

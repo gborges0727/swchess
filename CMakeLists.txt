@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(swchess LANGUAGES CXX)
+project(swchess LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,8 +14,21 @@ endif()
 set(SWCHESS_CD_DIR "${CMAKE_SOURCE_DIR}/original/win3x/cd"
     CACHE PATH "directory holding the original CD files")
 
-find_package(SDL3 CONFIG REQUIRED)
-find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+# BUILD_TESTING comes from CTest, and the module directories below read it to
+# decide whether to build their test programs. Include CTest before them.
+include(CTest)
+
+# SDL3, nlohmann-json and zlib, either downloaded and built here or found on
+# the machine. cmake/Dependencies.cmake explains the choice.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dependencies.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CompilerFlags.cmake")
+
+# Only the tests need Python. It writes the reference decoder output the
+# oracle tests compare against, and it answers the text module's width
+# questions. The game itself never runs it.
+if(BUILD_TESTING)
+  find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+endif()
 
 # Decoders for the original artwork. No SDL and no windowing.
 add_library(swchess_assets STATIC
@@ -28,7 +41,7 @@ add_library(swchess_assets STATIC
   src/assets/wav.cpp
 )
 target_include_directories(swchess_assets PUBLIC src)
-target_compile_options(swchess_assets PRIVATE -Wall -Wextra)
+target_compile_options(swchess_assets PRIVATE ${SWCHESS_WARNINGS})
 
 # Placement and software compositing shared by the window and the PPM dump.
 add_library(swchess_render STATIC
@@ -36,12 +49,12 @@ add_library(swchess_render STATIC
 )
 target_include_directories(swchess_render PUBLIC src)
 target_link_libraries(swchess_render PUBLIC swchess_assets)
-target_compile_options(swchess_render PRIVATE -Wall -Wextra)
+target_compile_options(swchess_render PRIVATE ${SWCHESS_WARNINGS})
 
 add_executable(swchess-viewer src/app/viewer.cpp src/app/review.cpp)
 target_link_libraries(swchess-viewer PRIVATE swchess_render swchess_anim swchess_audio swchess_text
                       SDL3::SDL3)
-target_compile_options(swchess-viewer PRIVATE -Wall -Wextra)
+target_compile_options(swchess-viewer PRIVATE ${SWCHESS_WARNINGS})
 
 # The chess rules module arrives separately. Build it when it is present.
 if(EXISTS ${CMAKE_SOURCE_DIR}/src/chess/CMakeLists.txt)
@@ -58,9 +71,7 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/src/audio/CMakeLists.txt)
   add_subdirectory(src/audio)
 endif()
 
-# The capture animation module resolves timelines and plays them. Its own
-# test registers with CTest, so testing turns on before the subdirectory.
-include(CTest)
+# The capture animation module resolves timelines and plays them.
 add_subdirectory(src/anim)
 add_subdirectory(src/board)
 
@@ -79,12 +90,23 @@ add_subdirectory(src/game)
 add_subdirectory(src/ui)
 add_subdirectory(src/save)
 
-# Two humans playing on the animated board.
-add_executable(swchess src/app/game_main.cpp)
-target_link_libraries(swchess PRIVATE swchess_game SDL3::SDL3)
-target_compile_options(swchess PRIVATE -Wall -Wextra)
+# Two humans playing on the animated board. src/app/startup.cpp finds the CD
+# folder and the artwork cache before the game reads either.
+add_executable(swchess src/app/game_main.cpp src/app/startup.cpp)
+target_link_libraries(swchess PRIVATE swchess_game swchess_platform SDL3::SDL3)
+target_compile_options(swchess PRIVATE ${SWCHESS_WARNINGS})
 
-if(BUILD_TESTING)
+# A release build on Windows starts without a console window behind it. A
+# debug build keeps the console so printf output and the headless commands
+# stay visible.
+if(WIN32)
+  set_target_properties(swchess PROPERTIES
+    WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>)
+endif()
+
+# The oracle tests read the original CD. A checkout carries none of those
+# files, so register them only when someone has pointed the build at a copy.
+if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
   add_subdirectory(tests)
 endif()
 
@@ -119,9 +141,10 @@ if(APPLE)
   configure_file("${CMAKE_SOURCE_DIR}/packaging/launcher.sh.in"
                  "${CMAKE_BINARY_DIR}/${SWCHESS_LAUNCHER_NAME}" @ONLY)
 
-  add_executable(StarWarsChess MACOSX_BUNDLE src/app/game_main.cpp "${SWCHESS_ICNS}")
-  target_link_libraries(StarWarsChess PRIVATE swchess_game SDL3::SDL3)
-  target_compile_options(StarWarsChess PRIVATE -Wall -Wextra)
+  add_executable(StarWarsChess MACOSX_BUNDLE src/app/game_main.cpp src/app/startup.cpp
+                 "${SWCHESS_ICNS}")
+  target_link_libraries(StarWarsChess PRIVATE swchess_game swchess_platform SDL3::SDL3)
+  target_compile_options(StarWarsChess PRIVATE ${SWCHESS_WARNINGS})
   set_target_properties(StarWarsChess PROPERTIES
     OUTPUT_NAME "${SWCHESS_BUNDLE_NAME}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
