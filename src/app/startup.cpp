@@ -2,15 +2,14 @@
 
 #include <SDL3/SDL.h>
 
-#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <string>
-#include <system_error>
 
+#include "assets/cdfs.h"
 #include "platform/paths.h"
 
 namespace swchess::app {
@@ -48,32 +47,6 @@ std::string tidyPath(std::string path) {
 std::string env(const char* name) {
     const char* value = std::getenv(name);
     return value == nullptr ? std::string() : std::string(value);
-}
-
-std::string upper(std::string text) {
-    for (char& c : text) {
-        if (c >= 'a' && c <= 'z') {
-            c = static_cast<char>(c - 'a' + 'A');
-        }
-    }
-    return text;
-}
-
-// Lists the names in `dir` under their uppercase spelling. The original CD
-// writes every name in uppercase, and some copies lowercase them, so the
-// check has to ignore the case.
-std::map<std::string, std::string> namesIn(const std::string& dir) {
-    std::map<std::string, std::string> names;
-    std::error_code error;
-    std::filesystem::directory_iterator entries(dir, error);
-    if (error) {
-        return names;
-    }
-    for (const std::filesystem::directory_entry& entry : entries) {
-        const std::string name = entry.path().filename().string();
-        names.emplace(upper(name), name);
-    }
-    return names;
 }
 
 // Puts the missing names into one sentence the player can act on.
@@ -162,11 +135,19 @@ std::vector<std::string> missingCdFiles(const std::string& dir) {
     if (dir.empty()) {
         return requiredCdFiles();
     }
-    const std::map<std::string, std::string> names = namesIn(dir);
-    for (const std::string& wanted : requiredCdFiles()) {
-        if (names.find(wanted) == names.end()) {
-            missing.push_back(wanted);
+    // CdDir indexes the folder by the uppercased form of each name, so a copy
+    // that spells the files in lowercase passes the same check. Reading the
+    // folder throws when it is not there or the player cannot open it, and
+    // then every required name counts as missing.
+    try {
+        const CdDir names{std::filesystem::path(dir)};
+        for (const std::string& wanted : requiredCdFiles()) {
+            if (!names.has(wanted)) {
+                missing.push_back(wanted);
+            }
         }
+    } catch (const std::exception&) {
+        return requiredCdFiles();
     }
     return missing;
 }

@@ -114,5 +114,5 @@ add_executable(startup_test "${CMAKE_SOURCE_DIR}/tests/startup_test.cpp"
                "${CMAKE_SOURCE_DIR}/src/app/startup.cpp")
 target_include_directories(startup_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(startup_test PRIVATE swchess_platform SDL3::SDL3)
-target_compile_options(startup_test PRIVATE -Wall -Wextra)
+target_compile_options(startup_test PRIVATE ${SWCHESS_WARNINGS})
 add_test(NAME app.startup COMMAND startup_test)
