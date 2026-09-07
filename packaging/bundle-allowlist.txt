@@ -1,0 +1,24 @@
+# Every file the release bundle is allowed to contain, written as a path
+# under Star Wars Chess.app. scripts/check-installed-app.sh reads this list
+# and fails when the bundle holds a file that is not here. A listed file that
+# is missing is fine, because the bundle changes as helpers come and go.
+#
+# The point of the list is to keep files decoded from the player's CD out of
+# the release. An icon made from the CD logo would pass a check that only
+# looks at file extensions, so name every file instead.
+Contents/Info.plist
+Contents/PkgInfo
+Contents/MacOS/Star Wars Chess
+Contents/MacOS/swchess-launcher
+Contents/MacOS/swchess-viewer
+Contents/MacOS/swchess-extract
+Contents/MacOS/swchess-interpolate
+Contents/Resources/StarWarsChess.icns
+Contents/Frameworks/libSDL3.0.dylib
+Contents/_CodeSignature/CodeResources
+# An ad-hoc signature writes these four files as well. A signature made with
+# a certificate keeps everything in CodeResources.
+Contents/_CodeSignature/CodeDirectory
+Contents/_CodeSignature/CodeRequirements
+Contents/_CodeSignature/CodeRequirements-1
+Contents/_CodeSignature/CodeSignature
