@@ -17,8 +17,10 @@ if(NOT TARGET SDL3::SDL3)
   find_package(SDL3 CONFIG REQUIRED)
 endif()
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CompilerFlags.cmake")
+
 add_library(swchess_platform STATIC paths.cpp)
 # Headers include as "platform/paths.h", so the include root is src.
 target_include_directories(swchess_platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(swchess_platform PUBLIC SDL3::SDL3)
-target_compile_options(swchess_platform PRIVATE -Wall -Wextra)
+target_compile_options(swchess_platform PRIVATE ${SWCHESS_WARNINGS})

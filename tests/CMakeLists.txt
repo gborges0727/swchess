@@ -21,7 +21,7 @@ add_custom_target(anx_oracle ALL DEPENDS "${SWCHESS_ORACLE}")
 
 add_executable(anx_oracle_test anx_oracle_test.cpp)
 target_link_libraries(anx_oracle_test PRIVATE swchess_assets swchess_export)
-target_compile_options(anx_oracle_test PRIVATE -Wall -Wextra)
+target_compile_options(anx_oracle_test PRIVATE ${SWCHESS_WARNINGS})
 add_dependencies(anx_oracle_test anx_oracle)
 
 foreach(anx IN LISTS SWCHESS_ANX_FILES)
@@ -67,7 +67,7 @@ add_custom_target(assets_oracle ALL DEPENDS "${SWCHESS_ASSET_ORACLE}")
 
 add_executable(assets_oracle_test assets_oracle_test.cpp)
 target_link_libraries(assets_oracle_test PRIVATE swchess_assets swchess_export)
-target_compile_options(assets_oracle_test PRIVATE -Wall -Wextra)
+target_compile_options(assets_oracle_test PRIVATE ${SWCHESS_WARNINGS})
 add_dependencies(assets_oracle_test assets_oracle)
 
 set(SWCHESS_PIECES AT BF C3 CB DV EM LO LS R2 SP ST YO)
