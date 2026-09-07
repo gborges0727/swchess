@@ -8,7 +8,7 @@
 // swaps the two sides to check that the difference is real.
 //
 //   swchess-viewer --cd original/win3x/cd --assets assets --review BBWB
-//   swchess-viewer --cd original/win3x/cd --assets assets --review BBWB \
+//   swchess-viewer --cd original/win3x/cd --assets assets --review BBWB
 //       --dump-at 5000 out.ppm
 //
 // The --dump-at form writes one side-by-side PPM through the software
