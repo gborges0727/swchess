@@ -67,6 +67,10 @@ add_subdirectory(src/board)
 # The text module reads the language string tables and the two bitmap fonts.
 add_subdirectory(src/text)
 
+# Where the game keeps its settings, its saves and its decoded artwork on each
+# operating system.
+add_subdirectory(src/platform)
+
 # The playable game. It needs the chess, board, anim, audio and text modules,
 # so it comes after all of them.
 add_subdirectory(src/game)
