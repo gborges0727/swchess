@@ -82,9 +82,8 @@ struct ShellOptions {
     // LOAD GAME. An empty answer cancels, and no callback at all leaves both
     // buttons reporting that they have no chooser.
     std::function<std::string(bool save)> chooseFile;
-    // Builds the computer opponent. No callback makes the random stand-in,
-    // so pointing this at makeOriginalEngine is the whole change the ported
-    // engine needs on this side.
+    // Builds the computer opponent. No callback makes the engine ported from
+    // CHESSAPP.EXE. The tests pass makeRandomEngine here for a fixed seed.
     std::function<std::unique_ptr<engine::Engine>(const engine::Config&)> makeEngine;
 };
 

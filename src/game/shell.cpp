@@ -219,7 +219,7 @@ GameShell::GameShell(const ShellOptions& options)
     engineConfig.cdDir = options_.cdDir;
     engineConfig.level = levelOfCommand(ini_.playLevel);
     engine_ = options_.makeEngine ? options_.makeEngine(engineConfig)
-                                  : engine::makeRandomEngine(engineConfig);
+                                  : engine::makeOriginalEngine(engineConfig);
     session_.setEngine(engine_.get());
     applyPlayers(bar_->players());
 
