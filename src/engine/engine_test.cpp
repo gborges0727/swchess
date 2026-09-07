@@ -310,6 +310,28 @@ void testSearchFindsMateInOne() {
           "the search scores the mate as a mate");
 }
 
+void testSearchDepthChangesThePlay() {
+    // The depth cap from the .CMP file is what separates the levels, so a
+    // deeper cap has to reach a deeper iteration and change the move.
+    const Position position = *Position::fromFen(
+        "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - 0 1");
+    swchess::engine::original::StyleWeights style{10, 90, 50, 30, 30, 10};
+    std::atomic<bool> stop{false};
+
+    swchess::engine::original::Searcher shallow(style);
+    const auto atOne =
+        shallow.run(position, {1, std::chrono::milliseconds(20000)}, stop);
+    check(atOne.depth == 1, "a cap of one ply reaches one ply");
+    check(position.san(atOne.move) == "Qc4+", "one ply grabs the check");
+
+    swchess::engine::original::Searcher deeper(style);
+    const auto atThree =
+        deeper.run(position, {3, std::chrono::milliseconds(20000)}, stop);
+    check(atThree.depth == 3, "a cap of three plies reaches three plies");
+    check(position.san(atThree.move) == "Rg3", "three plies find Rg3");
+    check(atThree.nodes > atOne.nodes, "the deeper search visits more nodes");
+}
+
 void testSearchStops() {
     const Position position = Position::start();
     swchess::engine::original::StyleWeights style;
@@ -548,6 +570,7 @@ int main(int argc, char** argv) {
         testPersonalities();
         testBook();
         testSearchFindsMateInOne();
+        testSearchDepthChangesThePlay();
         testSearchStops();
         testOriginalEngineAnswersInBudget();
         testOriginalEngineHonoursTheBudget();
