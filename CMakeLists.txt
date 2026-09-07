@@ -78,6 +78,11 @@ add_subdirectory(src/board)
 # The text module reads the language string tables and the two bitmap fonts.
 add_subdirectory(src/text)
 
+# The two helpers that fill the artwork cache. swchess-extract decodes the CD
+# and swchess-interpolate runs the frame interpolation over what it wrote.
+add_subdirectory(src/export)
+add_subdirectory(src/interp)
+
 # Where the game keeps its settings, its saves and its decoded artwork on each
 # operating system.
 add_subdirectory(src/platform)
