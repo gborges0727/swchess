@@ -11,6 +11,15 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#else
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include "text/font.h"
 #include "text/strings.h"
 
@@ -69,28 +78,90 @@ void writePpm(const std::string& path, const swchess::text::TextImage& image) {
 }
 
 // Asks width_oracle.py how wide each line draws. Returns an empty vector when
-// the script cannot run.
+// the script cannot run, which is what happens when the build found no Python.
+//
+// The arguments go to the interpreter one by one rather than through a shell
+// command line, so a directory name with a space or a quote in it reaches the
+// script unchanged.
 std::vector<int> askOracle(const std::string& python, const std::string& script,
                            const std::string& cdDir,
                            const std::vector<std::string>& requests) {
-    std::string command = "\"" + python + "\" \"" + script + "\" --cd \"" + cdDir + "\"";
+    if (python.empty() || script.empty()) {
+        return {};
+    }
+
+    std::vector<std::string> args{python, script, "--cd", cdDir};
     for (const std::string& request : requests) {
-        command += " " + request;
+        args.push_back(request);
     }
-    command += " 2>/dev/null";
-    std::FILE* pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
-        return {};
+    std::vector<char*> argv;
+    for (std::string& arg : args) {
+        argv.push_back(arg.data());
     }
+    argv.push_back(nullptr);
+
+#ifdef _WIN32
+    // Windows needs its own pipe and process calls here. The only test that
+    // asks the oracle anything reads the original CD, and that test does not
+    // run on Windows yet, so skip the cross check there.
+    (void)argv;
+    return {};
+#else
     std::vector<int> widths;
-    char line[64];
-    while (std::fgets(line, sizeof(line), pipe) != nullptr) {
-        widths.push_back(std::atoi(line));
-    }
-    if (pclose(pipe) != 0) {
+    int fds[2];
+    if (pipe(fds) != 0) {
         return {};
+    }
+    const pid_t child = fork();
+    if (child < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return {};
+    }
+    if (child == 0) {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        close(fds[1]);
+        // The script's own complaints belong nowhere. The exit status already
+        // tells the parent that the run failed.
+        const int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        execv(argv[0], argv.data());
+        _exit(127);
+    }
+    close(fds[1]);
+
+    std::string output;
+    char buffer[256];
+    ssize_t got = 0;
+    while ((got = read(fds[0], buffer, sizeof(buffer))) > 0) {
+        output.append(buffer, static_cast<std::size_t>(got));
+    }
+    close(fds[0]);
+
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return {};
+    }
+
+    std::size_t start = 0;
+    while (start < output.size()) {
+        const std::size_t end = output.find('\n', start);
+        const std::string line = output.substr(
+            start, end == std::string::npos ? std::string::npos : end - start);
+        if (!line.empty()) {
+            widths.push_back(std::atoi(line.c_str()));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
     }
     return widths;
+#endif
 }
 
 }  // namespace
