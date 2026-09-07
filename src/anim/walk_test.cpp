@@ -1,9 +1,11 @@
 // Checks the walk sequences of all twelve pieces against the piece DLLs and
-// runs WalkPlayer over them. Run it with the CD directory as the only
-// argument.
+// runs WalkPlayer over them. Run it with the CD directory, and with the assets
+// directory as a second argument to check the generated 60 frames per second
+// walk pictures too.
 
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <exception>
 #include <set>
 #include <string>
@@ -52,6 +54,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     const std::string cdDir = argv[1];
+    const std::string assetsDir = argc > 2 ? argv[2] : std::string();
 
     try {
         std::printf("%-6s %-4s %5s %5s %6s %6s %6s\n", "piece", "dir", "steps", "keys", "first",
@@ -327,8 +330,10 @@ int main(int argc, char** argv) {
               "the smooth walk takes as long as the stepped one");
         int previousY = 50;
         int movedFrames = 0;
+        int drawnFrames = 0;
         const std::int64_t stepMs = 1000 / 60;
         for (std::int64_t ms = 0; ms <= smooth.durationMs(); ms += stepMs) {
+            ++drawnFrames;
             const swchess::anim::WalkDraw draw = smooth.advance(ms).draw;
             check(draw.y >= previousY, "the smooth walk never moves backwards");
             check(draw.y <= 114, "the smooth walk never passes its target");
@@ -343,6 +348,9 @@ int main(int argc, char** argv) {
         check(previousY >= 106, "the smooth walk is nearly there one frame before the end");
         // Nine steps of the stepped walk become more than forty moves here.
         check(movedFrames > 30, "the smooth walk moves on most display frames");
+        std::printf("the 64 pixel walk runs %lld ms, and the piece moved on %d of the %d "
+                    "frames a 60 frames per second caller drew\n",
+                    static_cast<long long>(smooth.durationMs()), movedFrames, drawnFrames);
 
         swchess::anim::WalkPlayer onTicks;
         onTicks.setCadence(swchess::anim::Cadence::Interpolated60);
@@ -352,6 +360,76 @@ int main(int argc, char** argv) {
                 onTicks.advance(static_cast<std::int64_t>(i) * 100).draw;
             check(draw.x == onTicks.positions()[i].x && draw.y == onTicks.positions()[i].y,
                   "the smooth walk reaches each 100 ms point on time");
+        }
+
+        // The generated pictures, when tools/interp --walk has written them.
+        // A checkout without them runs everything above and stops here.
+        std::shared_ptr<const swchess::anim::Walk60Sequence> frames60 =
+            swchess::anim::sharedWalk60(assetsDir, "AT", "S");
+        if (frames60 == nullptr) {
+            std::printf("no walk60 frames under %s, skipping those checks\n",
+                        assetsDir.empty() ? "(no assets directory given)" : assetsDir.c_str());
+        } else {
+            check(frames60->cycleSteps == atSouth.steps.size(),
+                  "the generated cycle holds one pose per walk frame");
+            check(frames60->frames.size() ==
+                      frames60->cycleSteps * static_cast<std::size_t>(frames60->framesPerStep),
+                  "the generated cycle holds six pictures per pose");
+            check(frames60->frameAt(0)->sub == 0 && frames60->frameAt(0)->step == 0,
+                  "the cycle starts on the first pose itself");
+            check(frames60->frameAt(17)->sub == 1,
+                  "the second picture of a step replaces the first after a sixth of it");
+            check(frames60->frameAt(100)->step == 1 && frames60->frameAt(100)->sub == 0,
+                  "the next pose itself stands on the screen at 100 ms");
+            const std::int64_t cycleMs =
+                static_cast<std::int64_t>(frames60->cycleSteps) * frames60->stepMs;
+            check(frames60->frameAt(cycleMs) == frames60->frameAt(0),
+                  "the cycle comes round again when it runs out");
+            check(swchess::anim::sharedWalk60(assetsDir, "AT", "S") == frames60,
+                  "the same direction is read once and handed out again");
+
+            swchess::anim::WalkPlayer drawn;
+            drawn.setCadence(swchess::anim::Cadence::Interpolated60);
+            drawn.setFrames60(frames60);
+            drawn.start(&atSouth, 100, 50, 100, 114, 0);
+            std::size_t distinct = 0;
+            const swchess::anim::Walk60Frame* previous = nullptr;
+            for (std::int64_t ms = 0; ms < 100; ms += 4) {
+                const swchess::anim::WalkDraw draw = drawn.advance(ms).draw;
+                check(draw.frame != nullptr, "the walk draws a generated picture");
+                check(draw.width == frames60->canvasWidth &&
+                          draw.height == frames60->canvasHeight,
+                      "the generated picture reports the canvas size");
+                if (draw.frame != previous) {
+                    ++distinct;
+                    previous = draw.frame;
+                }
+            }
+            check(distinct == 6, "one 100 ms step draws six different pictures");
+
+            // The picture at a tick is the pose the stepped cadence draws.
+            swchess::anim::WalkPlayer ticks;
+            ticks.setCadence(swchess::anim::Cadence::Interpolated60);
+            ticks.setFrames60(frames60);
+            ticks.start(&atSouth, 100, 50, 100, 114, 0);
+            for (std::size_t i = 0; i < ticks.positions().size(); ++i) {
+                const swchess::anim::WalkDraw draw =
+                    ticks.advance(static_cast<std::int64_t>(i) * 100).draw;
+                check(draw.frame != nullptr && draw.frame->sub == 0,
+                      "a 100 ms tick draws a hand drawn pose and not one between");
+                check(draw.frame != nullptr &&
+                          draw.frame->step == draw.stepIndex % frames60->cycleSteps,
+                      "the generated picture at a tick is the pose the walk names");
+            }
+
+            // The original cadence keeps the hand drawn pictures.
+            swchess::anim::WalkPlayer original;
+            original.setFrames60(frames60);
+            original.start(&atSouth, 100, 50, 100, 114, 0);
+            check(original.advance(50).draw.frame == nullptr,
+                  "the original cadence draws no generated picture");
+            check(original.advance(50).draw.bitmap == atSouth.steps.front().bitmap,
+                  "the original cadence holds the first hand drawn picture through the step");
         }
 
         // A knight jumps two squares by one axis and one by the other, and it

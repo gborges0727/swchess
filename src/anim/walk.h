@@ -28,10 +28,12 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "anim/player.h"
+#include "anim/png_read.h"
 #include "assets/piece_dll.h"
 
 namespace swchess::anim {
@@ -174,12 +176,67 @@ inline constexpr std::int64_t kWalkFrameMs = 100;
 // for, and the piece keeps this steady pace whatever character it is.
 inline constexpr int kWalkPointsPerFrame = 4;
 
+// One generated picture of a walk cycle.
+struct Walk60Frame {
+    std::string file;  // "S/frame00007.png", relative to the walk60 directory
+    std::size_t step = 0;  // which hand drawn pose it follows
+    std::size_t sub = 0;   // 0 for the pose itself, 1 to 5 for the ones between
+    PngImage image;        // straight RGBA, the canvas size
+};
+
+// The 60 frames per second pictures of one direction, as tools/interp --walk
+// writes them.
+//
+// The hand drawn pictures of one direction come in different sizes, so the
+// tool composes every one of them onto a single canvas around the anchor the
+// piece stands on. `anchorX` and `anchorY` say where that anchor sits inside
+// the canvas, and the caller draws the picture from there rather than sizing
+// the rectangle from the picture.
+struct Walk60Sequence {
+    std::string piece;      // "AT"
+    std::string section;    // "S"
+    std::string directory;  // the walk60 directory the frames came from
+    int canvasWidth = 0;
+    int canvasHeight = 0;
+    int anchorX = 0;
+    int anchorY = 0;
+    int framesPerStep = 6;
+    std::int64_t stepMs = kWalkFrameMs;
+    std::size_t cycleSteps = 0;  // hand drawn poses this cycle holds
+
+    // cycleSteps * framesPerStep pictures, in cycle order.
+    std::vector<Walk60Frame> frames;
+
+    // The picture standing `ms` after the walk started. The cycle repeats, so
+    // a time past the end of it comes round again. Returns null when the
+    // sequence holds no frames.
+    const Walk60Frame* frameAt(std::int64_t ms) const;
+};
+
+// Reads `assetsDir`/pieces/<piece>/walk60/manifest.json and the frames of one
+// direction. Returns nothing when that manifest does not exist or names no
+// such direction, which is how a piece the tool has not reached yet reports
+// itself. Throws std::runtime_error when the manifest is there but unreadable.
+//
+// The same sequence is handed out again after the first read. The cache keeps
+// the last few directions and drops the rest, because one direction of one
+// piece holds about three megabytes of pixels. Holding the returned pointer
+// keeps those pixels alive after the cache has dropped them.
+std::shared_ptr<const Walk60Sequence> sharedWalk60(const std::string& assetsDir,
+                                                   const std::string& piece,
+                                                   const std::string& section);
+
 // The bitmap the caller should draw and where to put it.
 struct WalkDraw {
     bool visible = false;
     // The walk frame. Null while sliding, which means the caller draws the
     // piece's ordinary sheet cell instead.
     const PieceBitmap* bitmap = nullptr;
+    // The generated picture to draw instead of that bitmap, or null when the
+    // walk has none. It lives as long as the player runs.
+    const Walk60Frame* frame = nullptr;
+    int anchorX = 0;  // where the anchor sits inside that picture
+    int anchorY = 0;
     // The anchor the piece stands on. Under Original120ms this is a point of
     // the path. Under Interpolated60 it sits between two of them, on the same
     // straight line.
@@ -235,6 +292,15 @@ public:
     void setCadence(Cadence cadence) { cadence_ = cadence; }
     Cadence cadence() const { return cadence_; }
 
+    // Hands the player the generated 60 frames per second pictures of this
+    // direction. Under Interpolated60 it draws one of those every sixth of a
+    // 100 ms step instead of holding one hand drawn picture for the whole
+    // step. Passing null, or a cycle whose pose count differs from the
+    // sequence the walk runs, goes back to the hand drawn pictures. Call it
+    // before start.
+    void setFrames60(std::shared_ptr<const Walk60Sequence> frames);
+    const Walk60Sequence* frames60() const { return frames60_.get(); }
+
     // Move the clock to `nowMs` and report the frame on screen. Time never
     // runs backwards here: a smaller `nowMs` than the last one leaves the
     // clock where it was.
@@ -261,6 +327,8 @@ private:
     void build();
 
     const WalkSequence* sequence_ = nullptr;
+    std::shared_ptr<const Walk60Sequence> frames60_;
+    bool useFrames60_ = false;
     std::vector<PathPoint> path_;
     std::vector<WalkDraw> positions_;
     Cadence cadence_ = Cadence::Original120ms;

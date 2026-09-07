@@ -1,12 +1,18 @@
 #include "anim/walk.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <deque>
+#include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include "assets/cdfs.h"
 #include "assets/ini.h"
@@ -51,6 +57,15 @@ bool parseStepValue(const std::string& raw, int* dx, int* dy) {
     *dx = iniAsInt(raw.substr(0, comma), 0);
     *dy = iniAsInt(raw.substr(comma + 1), 0);
     return true;
+}
+
+// How many directions of generated walk pictures the cache keeps. One holds
+// about three megabytes, so twelve is around forty megabytes.
+constexpr std::size_t kWalk60CacheSize = 12;
+
+bool fileExists(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    return static_cast<bool>(file);
 }
 
 int sectionInt(const IniSection* section, const std::string& key, int fallback) {
@@ -272,6 +287,124 @@ Direction walkDirection(int fileDelta, int rankDelta, bool turned) {
     return Direction::E;
 }
 
+const Walk60Frame* Walk60Sequence::frameAt(std::int64_t ms) const {
+    if (frames.empty() || framesPerStep <= 0 || stepMs <= 0) {
+        return nullptr;
+    }
+    if (ms < 0) {
+        ms = 0;
+    }
+    // Six pictures to a step, and the cycle starts again once it runs out.
+    const std::int64_t count = static_cast<std::int64_t>(frames.size());
+    std::int64_t at = ms * framesPerStep / stepMs;
+    at %= count;
+    return &frames[static_cast<std::size_t>(at)];
+}
+
+namespace {
+
+// Reads one direction out of a walk60 manifest that is already parsed.
+std::optional<Walk60Sequence> readWalk60(const nlohmann::json& manifest,
+                                         const std::string& directory,
+                                         const std::string& piece,
+                                         const std::string& section) {
+    Walk60Sequence walk;
+    walk.piece = piece;
+    walk.section = section;
+    walk.directory = directory;
+    walk.framesPerStep = manifest.at("frames_per_step").get<int>();
+    walk.stepMs = manifest.at("step_ms").get<std::int64_t>();
+
+    const nlohmann::json* wanted = nullptr;
+    for (const nlohmann::json& node : manifest.at("sections")) {
+        if (node.at("section").get<std::string>() == section) {
+            wanted = &node;
+            break;
+        }
+    }
+    if (wanted == nullptr) {
+        return std::nullopt;
+    }
+    walk.canvasWidth = wanted->at("canvas").at("w").get<int>();
+    walk.canvasHeight = wanted->at("canvas").at("h").get<int>();
+    walk.anchorX = wanted->at("anchor").at("x").get<int>();
+    walk.anchorY = wanted->at("anchor").at("y").get<int>();
+    walk.cycleSteps = wanted->at("cycle").size();
+
+    for (const nlohmann::json& node : wanted->at("frames")) {
+        Walk60Frame frame;
+        frame.file = node.at("file").get<std::string>();
+        frame.step = node.at("step").get<std::size_t>();
+        frame.sub = node.at("sub").get<std::size_t>();
+        frame.image = readPng(directory + "/" + frame.file);
+        if (frame.image.width != walk.canvasWidth || frame.image.height != walk.canvasHeight) {
+            throw std::runtime_error(directory + "/" + frame.file +
+                                     " does not match the canvas the manifest names");
+        }
+        walk.frames.push_back(std::move(frame));
+    }
+    if (walk.frames.size() != walk.cycleSteps * static_cast<std::size_t>(walk.framesPerStep)) {
+        throw std::runtime_error(directory + " [" + section + "] holds " +
+                                 std::to_string(walk.frames.size()) + " frames for " +
+                                 std::to_string(walk.cycleSteps) + " poses");
+    }
+    return walk;
+}
+
+}  // namespace
+
+std::shared_ptr<const Walk60Sequence> sharedWalk60(const std::string& assetsDir,
+                                                   const std::string& piece,
+                                                   const std::string& section) {
+    if (assetsDir.empty()) {
+        return nullptr;
+    }
+    const std::string name = uppercased(piece);
+    const std::string dir = uppercased(section);
+    const std::string key = assetsDir + "/" + name + "/" + dir;
+
+    static std::mutex lock;
+    static std::map<std::string, std::shared_ptr<const Walk60Sequence>> cache;
+    static std::deque<std::string> order;
+    std::lock_guard<std::mutex> held(lock);
+    auto found = cache.find(key);
+    if (found != cache.end()) {
+        return found->second;
+    }
+
+    const std::string directory = assetsDir + "/pieces/" + name + "/walk60";
+    const std::string manifestPath = directory + "/manifest.json";
+    std::shared_ptr<const Walk60Sequence> loaded;
+    if (fileExists(manifestPath)) {
+        nlohmann::json manifest;
+        std::ifstream file(manifestPath, std::ios::binary);
+        try {
+            file >> manifest;
+        } catch (const std::exception& problem) {
+            throw std::runtime_error(manifestPath + ": " + problem.what());
+        }
+        std::optional<Walk60Sequence> walk = readWalk60(manifest, directory, name, dir);
+        if (walk.has_value()) {
+            loaded = std::make_shared<const Walk60Sequence>(std::move(*walk));
+        }
+    }
+
+    cache.emplace(key, loaded);
+    order.push_back(key);
+    // The oldest direction leaves the cache. Anyone still walking it holds a
+    // pointer of their own, so the pictures stay where they are until that
+    // walk ends.
+    while (order.size() > kWalk60CacheSize) {
+        cache.erase(order.front());
+        order.pop_front();
+    }
+    return loaded;
+}
+
+void WalkPlayer::setFrames60(std::shared_ptr<const Walk60Sequence> frames) {
+    frames60_ = std::move(frames);
+}
+
 void WalkPlayer::start(const WalkSequence* sequence, std::vector<PathPoint> path,
                        std::int64_t nowMs) {
     sequence_ = sequence;
@@ -281,6 +414,11 @@ void WalkPlayer::start(const WalkSequence* sequence, std::vector<PathPoint> path
     elapsedMs_ = 0;
     durationMs_ = 0;
     sliding_ = sequence == nullptr || sequence->steps.empty();
+    // The generated pictures line up with the hand drawn ones only when both
+    // cycles hold the same poses. A manifest written before the artwork
+    // changed would draw the wrong leg, so it is dropped instead.
+    useFrames60_ = !sliding_ && frames60_ != nullptr && !frames60_->frames.empty() &&
+                   frames60_->cycleSteps == sequence->steps.size();
     finished_ = path_.size() < 2;
     if (path_.empty()) {
         return;
@@ -362,6 +500,19 @@ WalkUpdate WalkPlayer::advance(std::int64_t nowMs) {
         update.draw.x = here.x + static_cast<int>(std::lround((next.x - here.x) * part));
         update.draw.y = here.y + static_cast<int>(std::lround((next.y - here.y) * part));
         update.draw.progress = here.progress + (next.progress - here.progress) * part;
+    }
+    // One hand drawn picture stands for a whole 100 ms step. The generated
+    // ones replace it every sixth of a step, so the legs move as often as the
+    // piece does.
+    if (cadence_ == Cadence::Interpolated60 && useFrames60_) {
+        const Walk60Frame* frame = frames60_->frameAt(elapsedMs_);
+        if (frame != nullptr) {
+            update.draw.frame = frame;
+            update.draw.width = frames60_->canvasWidth;
+            update.draw.height = frames60_->canvasHeight;
+            update.draw.anchorX = frames60_->anchorX;
+            update.draw.anchorY = frames60_->anchorY;
+        }
     }
     update.finished = finished_;
     return update;

@@ -88,6 +88,6 @@ if(BUILD_TESTING AND EXISTS "${SWCHESS_CD_DIR}")
   target_link_libraries(walk_test PRIVATE swchess_anim)
   target_compile_options(walk_test PRIVATE ${SWCHESS_WARNINGS})
 
-  add_test(NAME walk_test COMMAND walk_test "${SWCHESS_CD_DIR}")
+  add_test(NAME walk_test COMMAND walk_test "${SWCHESS_CD_DIR}" "${SWCHESS_ASSETS_DIR}")
   set_tests_properties(walk_test PROPERTIES TIMEOUT 300)
 endif()

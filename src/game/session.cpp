@@ -677,6 +677,13 @@ void GameSession::startLeg(std::size_t index, std::int64_t nowMs) {
     leg.fromDepth = from.depth;
     leg.toDepth = to.depth;
     walker_.setCadence(settings_.cadence);
+    // The generated walk pictures of this piece and heading, when tools/interp
+    // has written them. The player keeps them alive for as long as the leg
+    // runs and falls back to the hand drawn pictures when there are none.
+    walker_.setFrames60(leg.walk == nullptr
+                            ? nullptr
+                            : anim::sharedWalk60(assetsDir_, leg.walk->piece,
+                                                 leg.walk->section));
     walker_.start(leg.walk, from.x, from.y, to.x, to.y, nowMs);
     walkDraw_ = walker_.advance(nowMs).draw;
 }
@@ -902,7 +909,9 @@ void GameSession::drawPieces(Image& out) const {
         int height = walkDraw_.height;
         const std::uint8_t* rgba = nullptr;
         const SheetCell* cell = nullptr;
-        if (walkDraw_.bitmap != nullptr) {
+        if (walkDraw_.frame != nullptr) {
+            rgba = walkDraw_.frame->image.pixels.data();
+        } else if (walkDraw_.bitmap != nullptr) {
             rgba = walkFrameRgba(walkDraw_.bitmap).data();
         } else {
             const board::SheetPosition at =
@@ -912,8 +921,15 @@ void GameSession::drawPieces(Image& out) const {
             width = scene_.sheet.cellWidth;
             height = scene_.sheet.cellHeight;
         }
-        const board::SpriteRect rect = board::spriteRect(
+        board::SpriteRect rect = board::spriteRect(
             board::ScreenPoint{walkDraw_.x, walkDraw_.y}, width, height, flat);
+        if (walkDraw_.frame != nullptr && !flat) {
+            // tools/interp composed the generated picture around the anchor
+            // the piece stands on, so its corner comes from the manifest
+            // rather than from the size of the picture.
+            rect.left = walkDraw_.x - walkDraw_.anchorX;
+            rect.top = walkDraw_.y - walkDraw_.anchorY;
+        }
         insertByDepth(sprites, Sprite{rgba, width, height, rect.left, rect.top, depth});
     }
 
