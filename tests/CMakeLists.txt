@@ -100,3 +100,10 @@ add_test(NAME timeline.parity
          COMMAND python3 "${CMAKE_SOURCE_DIR}/tests/timeline_parity.py"
                  $<TARGET_FILE:swchess-viewer> "${CMAKE_SOURCE_DIR}/original/win3x/cd"
                  "${CMAKE_SOURCE_DIR}/assets")
+
+# The case-insensitive CD lookup. It builds its own temporary directory, so it
+# needs no CD.
+add_executable(cdfs_test "${CMAKE_SOURCE_DIR}/src/assets/cdfs_test.cpp")
+target_include_directories(cdfs_test PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(cdfs_test PRIVATE -Wall -Wextra)
+add_test(NAME assets.cdfs COMMAND cdfs_test)
