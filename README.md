@@ -51,6 +51,83 @@ Build the double-clickable application with the packaging script. It writes
 ./scripts/build-app.sh
 ```
 
+## Release
+
+Four scripts turn the source into a disk image a player can download. Run
+them in this order. The build directory `build-release` is separate from
+`build` so the release never reuses objects from a developer build.
+
+```sh
+./scripts/build-app.sh build-release 'arm64;x86_64' 11.0
+SWCHESS_SIGN_IDENTITY='Developer ID Application: NAME (E85W63H34G)' \
+    ./scripts/package-macos.sh 'build-release/Star Wars Chess.app' dist 0.6.0
+SWCHESS_NOTARY_PROFILE=swchess-notary ./scripts/notarize-macos.sh dist/StarWarsChess-0.6.0.dmg
+./scripts/check-installed-app.sh dist/StarWarsChess-0.6.0.dmg --cd original/win3x/cd
+```
+
+`build-app.sh` takes a build directory, a list of CPU architectures and the
+oldest macOS the app must run on. It passes the last two to CMake as
+`CMAKE_OSX_ARCHITECTURES` and `CMAKE_OSX_DEPLOYMENT_TARGET`. Two
+architectures need SDL3 built from source, which `-DSWCHESS_VENDOR_DEPS=ON`
+asks for. Afterwards it reads every binary in the bundle with `lipo`, `otool`
+and `vtool`. It stops when a binary is missing a CPU, loads a library from
+Homebrew or the build directory, or asks for a newer macOS than you named.
+Set `SWCHESS_AUDIT=warn` to see those complaints without stopping the build.
+
+`package-macos.sh` signs the helper programs first and the app last, verifies
+the result, and writes `StarWarsChess-<version>.dmg` holding the app, a
+shortcut to Applications and `packaging/Install.txt`. Leave
+`SWCHESS_SIGN_IDENTITY` unset and it signs ad-hoc, which is enough to test
+the steps on your own Mac. Set `SWCHESS_MAKE_ZIP=1` for a zip beside the disk
+image.
+
+`notarize-macos.sh` sends the disk image to Apple, waits for the answer,
+saves the log as `StarWarsChess-<version>-notary.json`, and staples the
+ticket to the disk image. It stops without stapling when Apple reports
+anything other than `Accepted`. Leave `SWCHESS_NOTARY_PROFILE` unset and it
+prints the command that creates the profile, then exits without submitting.
+
+`check-installed-app.sh` treats the download the way a player does. It mounts
+the disk image, copies the app to a temporary folder, checks the signature,
+checks that no binary reaches outside the bundle, checks every file in the
+bundle against `packaging/bundle-allowlist.txt`, and plays 500 milliseconds
+of a game from that copy with the source tree out of reach. The allow-list is
+what keeps a file decoded from your CD out of a release.
+
+### The one-time setup
+
+Both steps need an Apple Developer Program membership, which costs US$99 a
+year. Create a Developer ID Application certificate at
+[developer.apple.com](https://developer.apple.com/account/resources/certificates/list)
+and download it, then double-click it to put it in your keychain. Check that
+it arrived and copy its full name.
+
+```sh
+security find-identity -v -p codesigning
+```
+
+Then store the notarization credentials once. Apple asks for an app-specific
+password, which you make at [appleid.apple.com](https://appleid.apple.com)
+under Sign-In and Security.
+
+```sh
+xcrun notarytool store-credentials 'swchess-notary' \
+    --apple-id 'you@example.com' --team-id E85W63H34G \
+    --password 'abcd-efgh-ijkl-mnop'
+```
+
+### What Gatekeeper does
+
+| What you built | What a player's Mac does with it |
+| --- | --- |
+| An unsigned or ad-hoc signed download | Gatekeeper blocks the normal launch, because nothing identifies who published the app. |
+| Signed with Developer ID, not notarized | The signature names you, but Gatekeeper still refuses the launch without a notarization ticket. |
+| Signed and notarized | Gatekeeper checks the app and lets it open. The player may still confirm the first launch of a download. |
+| Signed, notarized and stapled | The ticket travels inside the disk image, so the launch works even when the Mac cannot reach Apple. |
+
+Do not tell players to right-click and choose Open. macOS Sequoia removed
+that way around the check.
+
 ## Interpolated captures
 
 The original plays a capture at one pose every 120 milliseconds. The
