@@ -208,8 +208,21 @@ int main(int argc, char** argv) {
         swchess::game::ScriptOptions pawn;
         pawn.cdDir = cdDir;
         pawn.moves = swchess::game::splitScript("e2e4 d7d5 e4d5");
-        pawn.dumpAtMs = 3000;
         pawn.dumpPath = outDir + "/game_test_capture.ppm";
+
+        // How long the three walks before the film take depends on the pace in
+        // walk.h, so the run happens twice. The first one names the moment the
+        // film starts and the second one dumps a picture 300 ms into it.
+        const swchess::game::ScriptResult timing = swchess::game::runScript(pawn);
+        std::int64_t filmStartMs = -1;
+        for (const swchess::game::StateSample& sample : timing.states) {
+            if (sample.state == swchess::game::AnimState::Capturing) {
+                filmStartMs = sample.timeMs;
+                break;
+            }
+        }
+        check(filmStartMs >= 0, "the pawn capture script plays a film");
+        pawn.dumpAtMs = filmStartMs + 300;
         const swchess::game::ScriptResult took = swchess::game::runScript(pawn);
         std::printf("pawn capture states: %s\n", trail(took).c_str());
 
@@ -225,10 +238,10 @@ int main(int argc, char** argv) {
         // is the pose the player named.
         check(took.dumped, "the run wrote its picture");
         check(took.dumpState == swchess::game::AnimState::Capturing,
-              "3000 ms into the run the session is playing a capture");
+              "the dump caught the session playing a capture");
         check(took.dumpCapture == "WPBP",
               "the film is the white pawn taking the black pawn");
-        check(took.dumpHasPose, "a film frame is on the screen at 3000 ms");
+        check(took.dumpHasPose, "a film frame is on the screen at the dump time");
 
         if (took.dumpHasPose) {
             const swchess::anim::CaptureTimeline film = swchess::anim::loadCapture(cdDir, "WPBP");
