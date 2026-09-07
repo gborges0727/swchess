@@ -100,6 +100,7 @@ frame inside it costs about 2 milliseconds.
 | `check.py` | Verifies a finished output directory |
 | `contact.py` | Draws a contact sheet of every Nth frame over a checkerboard |
 | `fixture.py` | Builds a stand-in `resolved.json` from the raw files |
+| `walk.py` | The `--walk` mode, which interpolates the piece walk cycles |
 
 `png.py` repeats the writer from `tools/extract/png.py` rather than importing
 it, because the extraction lane is rewriting that package. It adds a reader,
@@ -122,3 +123,35 @@ which nothing else in the repo has, to read back what RIFE wrote.
   the input, each at the time the input gives it. The sound times come from the
   sound's own `t_ms` in `resolved.json`, not from the pose's.
 - Every frame carries the canvas size.
+
+## The walk cycles
+
+A walking piece draws four to sixteen hand drawn pictures at one every 100
+milliseconds. `--walk` asks RIFE for five pictures between each pair, so one
+step becomes six frames at 60 frames per second.
+
+    python3 -m tools.interp --walk AT --assets assets
+    python3 -m tools.interp --walk all --assets assets
+    python3 -m tools.interp --walk-check assets/pieces/AT/walk60
+
+The run reads `assets/pieces/<CODE>/manifest.json`, takes the eight compass
+sections that have frames, and writes `assets/pieces/<CODE>/walk60/<SECTION>/`
+plus one `manifest.json` above them. Nothing it writes touches the capture
+output.
+
+The cycle loops, so the last pose interpolates back into the first one and a
+walk longer than the sequence keeps moving. RIFE's directory mode puts output
+`i` at input position `i * count / numframe`, so feeding it the whole cycle
+plus a copy of the first pose and asking for `6 * count` frames answers every
+sixth of a step in one process. Two processes, one for colour and one for
+alpha, cover a whole direction in under two seconds.
+
+The pictures of one direction come in different sizes. Every one of them is
+composed onto a single canvas at the place `src/board/placement.cpp` would draw
+it, centred on the anchor with the anchor a quarter of the width above the
+bottom edge. The manifest records that canvas and where the anchor sits inside
+it, and `src/anim/walk.cpp` draws the frame from the anchor rather than from
+the picture size.
+
+`--walk-check` reads the manifest, counts six frames per pose, and opens every
+frame to confirm it is RGBA at the canvas size.
