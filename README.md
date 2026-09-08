@@ -125,8 +125,7 @@ from Homebrew or a distribution package. `scripts/package-macos.sh` signs the
 app and `scripts/notarize-macos.sh` sends it to Apple. `.github/workflows/build.yml`
 builds on macOS, Ubuntu, Fedora and Windows on every push.
 
-The work was done with Claude Code driving many agents in parallel. The
-decompilation results and the design decisions are written up under
+The decompilation results and the design decisions are written up under
 `docs/research/`, one note per subsystem, with the Ghidra addresses behind every
 claim.
 
@@ -340,5 +339,4 @@ their work to a machine that can still run it. nihui wrote
 model this port interpolates with. hzwer and the rest of the RIFE team trained
 that model.
 Sam Lantinga and the SDL project supply the window, the input and the audio.
-Niels Lohmann's nlohmann-json reads and writes every manifest. The port was
-written with Claude Code.
+Niels Lohmann's nlohmann-json reads and writes every manifest.
