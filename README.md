@@ -274,9 +274,9 @@ readme beside it.
 
 Both packaging scripts take `--bundle-data`, which copies the CD files and the
 decoded artwork inside the package. That build reads its own copy and never
-asks the player for a folder. **Never publish one.** It contains the files from
-the CD, which are copyrighted, and the allow-list check exists to keep them out
-of a public release by accident.
+asks the player for a folder. It contains the files from the CD, which are
+copyrighted, so the allow-list check keeps them out of a package built without
+that flag. The packages named `full` on the releases page were built with it.
 
 ## Legal
 
@@ -286,10 +286,12 @@ builds against.
 
 The artwork, sound, text, animation and executables of Star Wars Chess are
 copyright Lucasfilm Ltd. and The Software Toolworks. None of them is in this
-repository, and none of them is in any public release. The player supplies
-their own CD, and the code reads the copy that player owns. This is a clean
-reimplementation written for interoperability with data the player already
-has, the way ScummVM and OpenRA read the data files of the games they support.
+repository. The code reads them from the player's own CD, and it is a clean
+reimplementation written for interoperability with that data, the way ScummVM
+and OpenRA read the data files of the games they support. The packages named
+`full` on the releases page include the CD files so the game runs with nothing
+else, and the packages without that word hold only the program. The rights
+holders may ask for the full packages to be removed, and they will be.
 
 Star Wars is a trademark of Lucasfilm Ltd. This project is not affiliated with,
 authorized by or endorsed by Lucasfilm, Disney or The Software Toolworks.
