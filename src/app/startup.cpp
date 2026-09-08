@@ -318,8 +318,18 @@ StartupResult resolveWithoutAsking(const StartupRequest& request) {
         }
     }
 
-    // Nothing names the artwork, so use the cache directory for this system.
-    // A cache with no catalog.json in it plays the original 120 ms poses.
+    // Nothing names the artwork. An assets folder beside the CD folder, the
+    // layout of the data download on the releases page, is taken first.
+    // Otherwise the cache directory for this system is used, and a cache
+    // with no catalog.json in it plays the original 120 ms poses.
+    if (result.assetsDir.empty() && !result.cdDir.empty()) {
+        const std::filesystem::path sibling =
+            std::filesystem::path(result.cdDir).parent_path() / "assets";
+        if (std::filesystem::is_regular_file(sibling / "catalog.json")) {
+            result.assetsDir = tidyPath(sibling.string());
+            result.shouldSave = true;
+        }
+    }
     if (result.assetsDir.empty()) {
         result.assetsDir = platform::cacheDir();
         result.shouldSave = true;

@@ -186,6 +186,11 @@ folder dialog and asks. A folder missing any of the three required files produce
 message naming the missing file, and the dialog opens again. The answer goes
 into `startup.conf`, so the game asks once.
 
+The releases page carries `StarWarsChess-<version>-data.tar`, which unpacks to
+a `swchess-data` folder holding `cd` and `assets`. Pick that `cd` folder in the
+dialog. When an `assets` folder with a `catalog.json` sits beside the chosen CD
+folder, the game uses it for the 60 fps frames without being told.
+
 A `--script` or `--dump-at` run draws into a file and opens no window, so it
 cannot ask. Those runs need `--cd` or `SWCHESS_CD` and stop with a message when
 they have neither.
